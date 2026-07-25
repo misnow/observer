@@ -1,0 +1,90 @@
+[
+    {
+        "type": "StepBlock",
+        "children": [
+            {
+                "type": "ClearCanvasData"
+            },
+            {
+                "type": "VisionWaitData",
+                "observatory_file": "C:/Users/mikes/PycharmProjects/lightproject/obstest1.json",
+                "vision_target": "tool01_Moti",
+                "condition": "Is True"
+            },
+            {
+                "type": "InteractiveMediaItem",
+                "pos": [
+                    271.0,
+                    495.0
+                ],
+                "filepath": "C:/Users/mikes/Pictures/HALO-Arrival-00719.jpg",
+                "media_type": "Image",
+                "rotation": 0.0,
+                "trigger": {
+                    "wait_type": "Line",
+                    "observatory_file": "C:/Users/mikes/PycharmProjects/lightproject/obstest1.json",
+                    "vision_target": "None",
+                    "condition": "Is True"
+                }
+            }
+        ]
+    },
+    {
+        "type": "StepBlock",
+        "children": [
+            {
+                "type": "InteractiveTextItem",
+                "pos": [
+                    733.0,
+                    384.0
+                ],
+                "text": "This is the  oscar snow joker",
+                "font_size": 49,
+                "text_color": "#ffffff",
+                "rotation": 0.0,
+                "trigger": {
+                    "wait_type": "Line",
+                    "observatory_file": "C:/Users/mikes/PycharmProjects/lightproject/obstest1.json",
+                    "vision_target": "tool01_Moti",
+                    "condition": "Is True"
+                }
+            },
+            {
+                "type": "InteractiveLLMTextItem",
+                "pos": [
+                    771.0,
+                    511.0
+                ],
+                "tool_name": "LLM Call",
+                "observatory_file": "C:/Users/mikes/PycharmProjects/lightproject/obstest1.json",
+                "source_tool": "tool02_LLM ",
+                "prompt": "youre a comedian, make a joke about the things you see. This is looking inside of a family home and their names are the snows, make a reference to their name with a joke and a total response less than 20 words.  only respond if you see a young boy about 10 years old.  otherwise report \"no oscar\" as your response, otherwise make a joke about oscar snow. ",
+                "font_size": 16,
+                "text_color": "#00ff99",
+                "width": 691.0,
+                "height": 541.0,
+                "rotation": 0.0,
+                "trigger": {
+                    "wait_type": "Line",
+                    "observatory_file": "C:/Users/mikes/PycharmProjects/lightproject/obstest1.json",
+                    "vision_target": "tool02_LLM ",
+                    "condition": "Is True"
+                }
+            }
+        ]
+    },
+    {
+        "type": "StepBlock",
+        "children": [
+            {
+                "type": "TimerData",
+                "duration": 10.0
+            },
+            {
+                "type": "FlowControlData",
+                "action": "Jump to Step Line",
+                "target_step": 1
+            }
+        ]
+    }
+]

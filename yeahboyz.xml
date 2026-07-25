@@ -1,0 +1,19 @@
+<?xml version='1.0' encoding='utf-8'?>
+<LightGuideDesign>
+    <StepBlock label="Step Block [1]">
+        <Asset type="InteractiveTextItem">
+            <ValueContext>New Text Line Input</ValueContext>
+            <FontProfile family="Arial" size="48" />
+            <ColorRGBA r="255" g="255" b="255" />
+            <PositionMatrix x="200.0" y="200.0" />
+            <RotationDegrees angle="0.0" />
+            <SignalTrigger sourceVariable="thermostat" boundaryCondition="On True" temporalLifespan="10" obsFile="C:/Users/mikes/PycharmProjects/lightproject/obsroom.xml" />
+            <BehavioralMask blink="False" />
+        </Asset>
+        <FlowControl>
+            <Action>Loop Continuously</Action>
+            <TargetStep>1</TargetStep>
+        </FlowControl>
+    </StepBlock>
+    <StepBlock label="Step Block [2]" />
+</LightGuideDesign>

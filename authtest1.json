@@ -1,0 +1,205 @@
+[
+    {
+        "type": "StepBlock",
+        "children": [
+            {
+                "type": "ClearCanvasData",
+                "output_canvas": -1
+            },
+            {
+                "type": "ObservatoryNodeData",
+                "filepath": "C:/Users/mikes/PycharmProjects/lightproject/obstest1.json"
+            },
+            {
+                "type": "VisionWaitData",
+                "observatory_file": "C:/Users/mikes/PycharmProjects/lightproject/obstest1.json",
+                "vision_target": "tool02_Moti",
+                "condition": "Is True"
+            },
+            {
+                "type": "TimerData",
+                "duration": 5.0
+            }
+        ]
+    },
+    {
+        "type": "StepBlock",
+        "children": [
+            {
+                "type": "InteractiveTextItem",
+                "pos": [
+                    834.0,
+                    203.0
+                ],
+                "text": "This is the thing",
+                "font_size": 48,
+                "text_color": "#ffffff",
+                "scale_factor": 1.13902625631587,
+                "scale_x": 1.13902625631587,
+                "scale_y": 1.13902625631587,
+                "lock_aspect_ratio": true,
+                "is_blinking": false,
+                "curve_radius": 0,
+                "output_canvas": 0,
+                "animation_type": "None",
+                "animation_direction": "Left",
+                "animation_duration": 1.0,
+                "rotation": 0.0,
+                "trigger": {
+                    "wait_type": "Line",
+                    "observatory_file": "C:/Users/mikes/PycharmProjects/lightproject/obstest1.json",
+                    "vision_target": "tool01_Moti",
+                    "condition": "Is True"
+                }
+            },
+            {
+                "type": "InteractiveLLMTextItem",
+                "pos": [
+                    362.0,
+                    279.0
+                ],
+                "tool_name": "LLM Call",
+                "observatory_file": "C:/Users/mikes/PycharmProjects/lightproject/obstest1.json",
+                "output_canvas": 1,
+                "source_tool": "tool01_LLM ",
+                "prompt": "In 40 words or less, roast this person.  ",
+                "font_size": 16,
+                "text_color": "#00ff99",
+                "width": 505.0,
+                "height": 165.0,
+                "hold_for_response": true,
+                "rotation": 0.0,
+                "trigger": {
+                    "wait_type": "Line",
+                    "observatory_file": "C:/Users/mikes/PycharmProjects/lightproject/obstest1.json",
+                    "vision_target": "tool02_LLM ",
+                    "condition": "Is True"
+                }
+            },
+            {
+                "type": "TimerData",
+                "duration": 20.0
+            },
+            {
+                "type": "InteractiveShapeItem",
+                "pos": [
+                    109.52404022823745,
+                    612.0
+                ],
+                "shape_type": "Square",
+                "svg_path": "",
+                "output_canvas": 0,
+                "rotation": 0.0,
+                "scale_factor": 1.0,
+                "scale_x": 1.4469016360143638,
+                "scale_y": 0.672873994317922,
+                "lock_aspect_ratio": false,
+                "outline_width": 10,
+                "outline_color": "#aa007f",
+                "fill_enabled": false,
+                "fill_color": "#3498db",
+                "is_blinking": false,
+                "animation_type": "Pan",
+                "animation_direction": "Left",
+                "animation_duration": 1.0,
+                "trigger": {
+                    "wait_type": "Line",
+                    "observatory_file": "",
+                    "vision_target": "None",
+                    "condition": "Is True"
+                }
+            },
+            {
+                "type": "InteractiveMediaItem",
+                "pos": [
+                    304.0,
+                    395.0
+                ],
+                "filepath": "C:/Users/mikes/Pictures/7PIN.png",
+                "media_type": "Image",
+                "rotation": 0.0,
+                "scale_factor": 1.0,
+                "time_hold": false,
+                "output_canvas": 0,
+                "scale_x": 0.6196122909065174,
+                "scale_y": 1.0027032431652894,
+                "lock_aspect_ratio": false,
+                "is_blinking": true,
+                "animation_type": "None",
+                "animation_direction": "Left",
+                "animation_duration": 1.0,
+                "trigger": {
+                    "wait_type": "Line",
+                    "observatory_file": "",
+                    "vision_target": "None",
+                    "condition": "Is True"
+                }
+            },
+            {
+                "type": "InteractiveMediaItem",
+                "pos": [
+                    1076.0,
+                    492.0
+                ],
+                "filepath": "C:/Users/mikes/Videos/dslrsampleslogo.avi",
+                "media_type": "Video",
+                "rotation": 0.0,
+                "scale_factor": 2.082648763850245,
+                "time_hold": true,
+                "output_canvas": 1,
+                "scale_x": 2.082648763850245,
+                "scale_y": 2.082648763850245,
+                "lock_aspect_ratio": true,
+                "is_blinking": false,
+                "animation_type": "None",
+                "animation_direction": "Left",
+                "animation_duration": 1.0,
+                "trigger": {
+                    "wait_type": "Line",
+                    "observatory_file": "",
+                    "vision_target": "None",
+                    "condition": "Is True"
+                }
+            },
+            {
+                "type": "UserWaitData",
+                "forward_action": "Next Step",
+                "forward_target_step": 1,
+                "backward_action": "Previous Step",
+                "backward_target_step": 1
+            }
+        ]
+    },
+    {
+        "type": "StepBlock",
+        "children": [
+            {
+                "type": "InteractiveHTMLItem",
+                "pos": [
+                    200.0,
+                    200.0
+                ],
+                "url": "https://www.makerfunhouse.com/",
+                "width": 469,
+                "height": 191,
+                "output_canvas": 0,
+                "rotation": 0.0,
+                "trigger": {
+                    "wait_type": "Line",
+                    "observatory_file": "",
+                    "vision_target": "None",
+                    "condition": "Is True"
+                }
+            },
+            {
+                "type": "TimerData",
+                "duration": 5.0
+            },
+            {
+                "type": "FlowControlData",
+                "action": "Jump to Step Line",
+                "target_step": 1
+            }
+        ]
+    }
+]

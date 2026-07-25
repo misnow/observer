@@ -1,0 +1,32 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+
+# --- Runtime IPC files -------------------------------------------------
+# Written continuously by Studio/Observatory while running. Committing them
+# creates permanent spurious diffs and can make one machine's stale state
+# look like a real change.
+vision_state.json
+studio_command.json
+
+# --- Generated artifacts ----------------------------------------------
+# Camera stills, segmentation cutouts, exported geometry. Regenerable, and
+# binary blobs bloat history fast.
+captures/
+*.step
+*.stl
+*.glb
+*_cutout.png
+
+# Keep the shape template library - those are source assets, not output.
+!shape_library/*.svg
+
+# OS / editor
+.idea/
+.vscode/
+*.swp
+Thumbs.db
+desktop.ini

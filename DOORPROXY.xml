@@ -1,0 +1,8 @@
+<?xml version='1.0' encoding='utf-8'?>
+<ObservatoryConfig>
+    <Filter>None</Filter>
+    <Sliders angle="180" intensity="127" score="90" />
+    <SearchROI toolName="tool01" x="224.0" y="86.0" w="300.0" h="300.0">
+        <PatternROI x="133.0" y="116.0" w="30.0" h="112.0" />
+    </SearchROI>
+</ObservatoryConfig>

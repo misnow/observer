@@ -1,0 +1,12 @@
+<?xml version='1.0' encoding='utf-8'?>
+<LightGuideDesign>
+    <Step id="1">
+        <Asset type="InteractiveTextItem">
+            <Text>Stay Away</Text>
+            <Position x="843.0" y="407.0" />
+            <Font family="Arial" size="80" />
+            <Rotation angle="0.0" />
+            <Behavior blink="True" variable="None" />
+        </Asset>
+    </Step>
+</LightGuideDesign>

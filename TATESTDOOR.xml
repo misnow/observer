@@ -1,0 +1,18 @@
+<?xml version='1.0' encoding='utf-8'?>
+<LightGuideDesign>
+    <StepBlock label="Step Block [1]">
+        <Asset type="InteractiveTextItem">
+            <ValueContext>GLASSES REQUIRED</ValueContext>
+            <FontProfile family="Arial" size="48" />
+            <ColorRGBA r="255" g="255" b="255" />
+            <PositionMatrix x="-159.0" y="402.0" />
+            <RotationDegrees angle="275.0" />
+            <SignalTrigger sourceVariable="tool01" boundaryCondition="On False" temporalLifespan="10" obsFile="C:/Users/mikes/PycharmProjects/lightproject/DOORPROXY.xml" />
+            <BehavioralMask blink="False" />
+        </Asset>
+        <FlowControl>
+            <Action>Loop Continuously</Action>
+            <TargetStep>1</TargetStep>
+        </FlowControl>
+    </StepBlock>
+</LightGuideDesign>

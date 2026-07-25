@@ -1,0 +1,105 @@
+[
+    {
+        "type": "StepBlock",
+        "children": [
+            {
+                "type": "ObservatoryNodeData",
+                "filepath": "C:/Users/mikes/PycharmProjects/lightproject/obstest2.json"
+            },
+            {
+                "type": "TimerData",
+                "duration": 5.0
+            },
+            {
+                "type": "ClearCanvasData"
+            },
+            {
+                "type": "VisionWaitData",
+                "observatory_file": "C:/Users/mikes/PycharmProjects/lightproject/obstest2.json",
+                "vision_target": "tool02_Moti",
+                "condition": "Is True"
+            }
+        ]
+    },
+    {
+        "type": "StepBlock",
+        "children": [
+            {
+                "type": "InteractiveTextItem",
+                "pos": [
+                    733.0,
+                    384.0
+                ],
+                "text": "Is there anybody out there.",
+                "font_size": 49,
+                "text_color": "#ffffff",
+                "rotation": 0.0,
+                "trigger": {
+                    "wait_type": "Line",
+                    "observatory_file": "C:/Users/mikes/PycharmProjects/lightproject/obstest1.json",
+                    "vision_target": "tool01_Moti",
+                    "condition": "Is True"
+                }
+            },
+            {
+                "type": "InteractiveLLMTextItem",
+                "pos": [
+                    771.0,
+                    511.0
+                ],
+                "tool_name": "LLM Call",
+                "observatory_file": "C:/Users/mikes/PycharmProjects/lightproject/obstest2.json",
+                "source_tool": "tool01_LLM ",
+                "prompt": "Compose a 20 words or less response, Politely get the person to look up.  ",
+                "font_size": 16,
+                "text_color": "#00ff99",
+                "width": 691.0,
+                "height": 541.0,
+                "hold_for_response": true,
+                "rotation": 0.0,
+                "trigger": {
+                    "wait_type": "Line",
+                    "observatory_file": "C:/Users/mikes/PycharmProjects/lightproject/obstest1.json",
+                    "vision_target": "tool02_LLM ",
+                    "condition": "Is True"
+                }
+            },
+            {
+                "type": "InteractiveMediaItem",
+                "pos": [
+                    435.0,
+                    503.0
+                ],
+                "filepath": "C:/Users/mikes/Pictures/HALO-Arrival-00719.jpg",
+                "media_type": "Image",
+                "rotation": 0.0,
+                "scale_factor": 1.0,
+                "time_hold": false,
+                "trigger": {
+                    "wait_type": "Line",
+                    "observatory_file": "C:/Users/mikes/PycharmProjects/lightproject/obstest1.json",
+                    "vision_target": "None",
+                    "condition": "Is True"
+                }
+            },
+            {
+                "type": "TimerData",
+                "duration": 35.0
+            }
+        ]
+    },
+    {
+        "type": "StepBlock",
+        "children": [
+            {
+                "type": "TimerData",
+                "duration": 10.0
+            },
+            {
+                "type": "FlowControlData",
+                "action": "Jump to Step Line",
+                "target_step": 4
+            }
+        ]
+    }
+]

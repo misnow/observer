@@ -1,0 +1,8 @@
+<?xml version='1.0' encoding='utf-8'?>
+<ObservatoryConfig>
+    <Filter>Edge Detection</Filter>
+    <Sliders angle="180" intensity="127" score="52" />
+    <SearchROI toolName="thermostat" x="735.2222222222222" y="429.0292397660819" w="377.0" h="352.0">
+        <PatternROI x="127.15789473684231" y="142.34502923976595" w="142.61988304093552" h="42.62573099415218" />
+    </SearchROI>
+</ObservatoryConfig>
