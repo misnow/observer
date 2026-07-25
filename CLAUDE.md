@@ -14,6 +14,7 @@ Supporting modules (deliberately standalone, keep them that way):
 
 | File | Purpose |
 |---|---|
+| `canvas_items.py` | Canvas assets: Text/Media/Shape/3D/Capture/HTML/LLM items, `AnimatableMixin`, `MediaResizeHandle`, `TriggerSettings` |
 | `vision_tools.py` | `SearchROI`, `PerspectivePlaneROI`, handles, image b64 helpers |
 | `ui_components.py` | `DARK_THEME`, `LLMWorker`, `LLMProviderSettingsWidget` |
 | `model3d.py` | 3D load (.stl/.step/…) + software renderer (numpy + QPainter) |
@@ -80,10 +81,17 @@ crucially **accepts no signal arguments** — which is what defuses cause #1.
 
 ## Editing this codebase
 
-`studio.py` is ~190KB. **Never patch it by index-range slicing**
+`studio.py` is ~147KB (was ~190KB before the canvas items were split out).
+**Never patch it by index-range slicing**
 (`s[:s.index(A)] + s[s.index(B):]`) — that silently deletes everything
 between the markers. It destroyed `Interactive3DModelItem` and
 `sync_llm_call_displays` in one session.
+
+The dependency runs **one way**: `studio` imports `canvas_items`, never the
+reverse. `TriggerSettings` lives in `canvas_items.py` (only the item classes
+construct one) and is re-exported from `studio` so `studio.TriggerSettings`
+still resolves — several `tests/` scripts reach names through `studio`, so
+that re-export is load-bearing, not decoration.
 
 Use the `Edit` tool (exact match, fails loudly). If scripting is
 unavoidable, use **pure insertion against a unique anchor**, or explicit
@@ -108,8 +116,9 @@ content replacement with an assert on match count.
 
 ## Known open items
 
-- `studio.py` needs splitting (canvas item classes → own module). Safe now
-  that git exists.
+- `studio.py` could be split further if it grows again — the sequence engine
+  and the properties-panel builders are the next natural seams. (The canvas
+  item classes are already out, in `canvas_items.py`.)
 - Intermittent `0xC0000409` on exit still unresolved; `closeEvent` stops web
   views, videos, and waits on workers, but a repro hasn't been pinned down.
 - `segmenter.py` supports SAM3/SAM2 detection but its predictor API is

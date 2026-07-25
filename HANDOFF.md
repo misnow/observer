@@ -78,11 +78,20 @@ Git repo initialised (3 commits). Working tree clean at `7f62b87`.
 - `segmenter.py` — GrabCut backend, **IoU 0.932 vs ground truth**
 - Atomic IPC writes (4319 reads under hammering, zero corrupt)
 
+- **`canvas_items.py` split (done).** The 9 canvas item classes +
+  `TriggerSettings` moved out of `studio.py`: 3738 → 2789 lines (190KB →
+  147KB), new module 992 lines. Verified byte-identical against git HEAD
+  (every class body, all 79 methods), then driven for real — all 8 asset
+  types inserted through `insert_asset`, full save/load round trip (8 in, 8
+  restored), real `main()` launch, clean exit, no Event Viewer entries.
+  Covered by `tests/verify_canvas_items_split.py`.
+
 **Known open:**
-1. **`studio.py` is 190KB / 21 classes and needs splitting.** This is the
-   next planned task. Canvas item classes → own module. Safe now that git
-   exists. *Do this with a fresh context budget — running low is exactly how
-   two methods got deleted.*
+1. **Two preserved tests are stale** (they fail identically at HEAD — not
+   regressions): `verify_model3d.py` predates Ctrl-drag and its fake event
+   lacks `modifiers()`; `verify_worker_crashfix.py` still expects
+   `InteractiveCaptureItem.roi`, deliberately removed in the Image Capture
+   migration. Both need their stubs updated to match current behaviour.
 2. **Intermittent `0xC0000409` on exit.** Unresolved. Last occurrence logged
    Observatory auto-capturing during shutdown, suggesting a timer still
    firing during teardown — **a lead, not a diagnosis.** `closeEvent` already
@@ -141,12 +150,21 @@ inside a Qt-invoked slot. To find it:
 
 ## 6. Suggested first move
 
-Split `studio.py`. Proposed: canvas item classes (`InteractiveTextItem`,
-`InteractiveMediaItem`, `InteractiveShapeItem`, `InteractiveHTMLItem`,
-`Interactive3DModelItem`, `InteractiveCaptureItem`, `InteractiveLLMTextItem`,
-`AnimatableMixin`, handles) → `canvas_items.py`, leaving `studio.py` as the
-app shell + sequence engine.
+The `canvas_items.py` split is **done** (see §4). `studio.py` is now the app
+shell + sequence engine + properties panels.
 
-**Commit before starting.** Move by **pure insertion + explicit deletion of
-matched content**, never index-range slicing. Verify with the existing
-scratchpad suites after each move.
+Pick from:
+
+- **Fix the two stale tests** (§4 item 1). Small, and it restores real
+  regression coverage on 3D pose and QThread lifecycle — the latter guards
+  one of the three documented crash causes.
+- **Split `studio.py` further** if it grows again. Next natural seams: the
+  sequence/run engine, and the properties-panel builders. The method that
+  worked: AST-locate the exact node span, extract verbatim, delete by
+  **explicit content replacement with an assert on match count** (never
+  index-range slicing), then prove nothing moved by diffing every class body
+  against `git show HEAD:studio.py`. That verification script is worth
+  rewriting each time — it's what turns a scary refactor into a boring one.
+- **Chase the exit-time `0xC0000409`** (§4 item 2).
+
+Whatever you pick: **commit before starting.**

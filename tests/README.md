@@ -23,6 +23,10 @@ These carry absolute paths to a session temp folder that no longer exists.
 Expect to fix the `RES`/`ISO` constants at the top of each before running.
 The *logic* is the valuable part.
 
+`verify_canvas_items_split.py` is the exception — it derives the project root
+from its own `__file__` and makes its own temp dir, so it runs as-is and its
+exit code is meaningful (0 = pass).
+
 ## Conventions worth keeping
 
 - `os.chdir()` into an isolated temp dir — IPC files are relative, and
@@ -43,7 +47,8 @@ The *logic* is the valuable part.
 | `verify_multicanvas.py` | 1–5 canvases, per-asset assignment, Clear Canvas targeting, shrink-rescue |
 | `verify_multicamera.py` | Per-tool camera binding, visibility filtering, File→New across cameras |
 | `verify_model3d.py` | 3D load/render/pose/save (predates Ctrl-drag; its fake event lacks `modifiers()`) |
-| `verify_worker_crashfix.py` | QThread lifecycle: rapid reloads, deleted-item delivery, torn-down panels |
+| `verify_worker_crashfix.py` | QThread lifecycle: rapid reloads, deleted-item delivery, torn-down panels (predates the Image Capture migration; still expects `InteractiveCaptureItem.roi`, which deliberately no longer exists) |
+| `verify_canvas_items_split.py` | `canvas_items.py` split: name surface, one-way dependency, every asset type inserted + save/load round trip |
 | `verify_run_mode_ui.py` | Run Mode panel hiding + active-step highlight |
 | `verify_user_wait_vision_gate.py` | User Wait as an *additional* gate on top of Vision Wait |
 | `verify_blob_revert.py` | Blob tool back to original single-blob behaviour |
