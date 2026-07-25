@@ -576,6 +576,258 @@ class InteractiveShapeItem(AnimatableMixin, QGraphicsItem):
         self.fill_color = QColor("#3498db")
         self.update()
 
+class Interactive3DModelItem(AnimatableMixin, QGraphicsRectItem):
+    """A 3D model (.stl/.obj/.ply/.glb or .step/.stp) rendered on the canvas.
+
+    Rendering is software (numpy + QPainter, see model3d.py) rather than
+    OpenGL: this machine has no usable GPU, and Qt's GPU-adjacent widgets
+    are what have repeatedly crashed this app.
+
+    Loading runs on a worker thread because STEP import cost scales with
+    face count - a face-heavy faceted STEP measured at ~100 seconds - and a
+    freeze that long is indistinguishable from a hang.
+    """
+
+    def __init__(self, filepath="", width=480, height=360):
+        super().__init__(0, 0, width, height)
+        self.trigger = TriggerSettings()
+        self._init_animation()
+        self.output_canvas = 0
+        self.filepath = filepath
+        self.is_blinking = False
+
+        # Model pose, kept separate from the QGraphicsItem's own position and
+        # scale so the 2D placement of the viewport and the 3D pose of the
+        # model inside it stay independent.
+        self.rot_x = 20.0
+        self.rot_y = -30.0
+        self.rot_z = 0.0
+        self.model_scale = 1.0
+        self.model_tx = 0.0
+        self.model_ty = 0.0
+
+        self.vertices = None
+        self.faces = None
+        self.load_error = ""
+        self.is_loading = False
+        self._loaders = []
+        self._load_generation = 0
+        self._home_pos = None
+        self._drag_last = None
+
+        self.model_color = QColor("#4aa3df")
+        self.setFlags(QGraphicsItem.GraphicsItemFlag.ItemIsMovable |
+                      QGraphicsItem.GraphicsItemFlag.ItemIsSelectable)
+        self.setPen(QPen(QColor("#4aa3df"), 2))
+        self.setBrush(QBrush(QColor(18, 18, 22, 235)))
+        self.handle = MediaResizeHandle(self)
+        self.handle.setPos(width - 6, height - 6)
+
+        if filepath:
+            self.load_model_async(filepath)
+
+    # --- loading ---------------------------------------------------------
+    def load_model_async(self, filepath, on_done=None):
+        import model3d
+        self.filepath = filepath
+        self.is_loading = True
+        self.load_error = ""
+        self._safe_update()
+
+        worker = model3d.ModelLoadWorker(filepath)
+        self._load_generation += 1
+        generation = self._load_generation
+
+        def handle(vertices, faces, error, gen=generation, wk=worker):
+            # Drop results from a superseded load: browsing to a second file
+            # while a slow STEP import is still running would otherwise let
+            # the older result overwrite the newer one when it finishes.
+            if gen != self._load_generation:
+                self._retire_loader(wk)
+                return
+            self.is_loading = False
+            if error:
+                self.load_error = error
+                self.vertices = self.faces = None
+            else:
+                self.vertices, self.faces = vertices, faces
+                self.load_error = ""
+            # Queued cross-thread slot: by the time it arrives the item may
+            # have been deleted (project loaded, canvas removed). Touching a
+            # dead C++ object raises RuntimeError, and an exception escaping
+            # a Qt slot is escalated by this PyQt6 build into a hard abort.
+            self._safe_update()
+            if on_done:
+                try:
+                    on_done(error)
+                except RuntimeError:
+                    pass
+            self._retire_loader(wk)
+
+        worker.loaded.connect(handle)
+        # A list, not a single attribute: a second load must not replace -
+        # and thereby garbage collect - a QThread that is still running.
+        self._loaders.append(worker)
+        worker.start()
+
+    def _retire_loader(self, worker):
+        try:
+            if worker in self._loaders:
+                self._loaders.remove(worker)
+        except Exception:
+            pass
+
+    def _safe_update(self):
+        try:
+            self.update()
+        except RuntimeError:
+            pass   # underlying C++ item already destroyed
+
+    def face_count(self):
+        return 0 if self.faces is None else len(self.faces)
+
+    # --- 3D transform ----------------------------------------------------
+    def set_rotation_3d(self, rx=None, ry=None, rz=None):
+        if rx is not None: self.rot_x = float(rx)
+        if ry is not None: self.rot_y = float(ry)
+        if rz is not None: self.rot_z = float(rz)
+        self.update()
+
+    def set_model_scale(self, s):
+        self.model_scale = max(0.05, float(s))
+        self.update()
+
+    def set_model_translation(self, tx=None, ty=None):
+        if tx is not None: self.model_tx = float(tx)
+        if ty is not None: self.model_ty = float(ty)
+        self.update()
+
+    # --- canvas reference point ------------------------------------------
+    def home_position(self):
+        """Canvas position the X/Y readout is measured from."""
+        if self._home_pos is None:
+            self._home_pos = self.pos()
+        return self._home_pos
+
+    def set_home_position(self, pos=None):
+        self._home_pos = QPointF(pos) if pos is not None else self.pos()
+
+    def canvas_offset(self):
+        home = self.home_position()
+        return self.pos().x() - home.x(), self.pos().y() - home.y()
+
+    def reset_view(self):
+        self.rot_x, self.rot_y, self.rot_z = 20.0, -30.0, 0.0
+        self.model_scale = 1.0
+        self.model_tx = self.model_ty = 0.0
+        # Return the box to its reference point too, so the readout goes back
+        # to 0,0 - the same origin the numbers are measured from.
+        self.setPos(self.home_position())
+        self.update()
+
+    def reset_to_default(self):
+        self.reset_scale_rotation_animation()
+        self.reset_view()
+
+    def resize_by_drag(self, x, y):
+        w = max(200.0, min(2000.0, x))
+        h = max(150.0, min(2000.0, y))
+        self.setRect(0, 0, w, h)
+        self.handle.setPos(w - 6, h - 6)
+        self.update()
+
+    # --- interaction -----------------------------------------------------
+    def mousePressEvent(self, event):
+        # Ctrl or Shift + drag repositions the whole viewport box instead of
+        # orbiting the model inside it. Without a modifier there'd be no way
+        # to move this item at all: a plain left-press is consumed by the
+        # orbit handler.
+        if event.modifiers() & (Qt.KeyboardModifier.ControlModifier |
+                                Qt.KeyboardModifier.ShiftModifier):
+            self._drag_last = None
+            super().mousePressEvent(event)   # Qt's own ItemIsMovable handling
+            return
+        if event.button() == Qt.MouseButton.LeftButton and self.faces is not None:
+            self._drag_last = event.pos()
+            event.accept()
+            return
+        super().mousePressEvent(event)
+
+    def mouseMoveEvent(self, event):
+        # Left-drag orbits. The pivot is wherever you pressed: translation is
+        # compensated each step so the grabbed point stays put on screen
+        # instead of sliding out from under the cursor.
+        if self._drag_last is not None:
+            delta = event.pos() - self._drag_last
+            self._drag_last = event.pos()
+
+            rect = self.rect()
+            pivot_x = event.pos().x() - (rect.width() / 2.0 + self.model_tx)
+            pivot_y = event.pos().y() - (rect.height() / 2.0 + self.model_ty)
+
+            d_yaw = delta.x() * 0.5
+            d_pitch = delta.y() * 0.5
+            self.rot_y += d_yaw
+            self.rot_x += d_pitch
+
+            ang = math.radians(d_yaw)
+            ca, sa = math.cos(ang), math.sin(ang)
+            new_px = pivot_x * ca - pivot_y * sa
+            new_py = pivot_x * sa + pivot_y * ca
+            self.model_tx += pivot_x - new_px
+            self.model_ty += pivot_y - new_py
+
+            self.update()
+            event.accept()
+            return
+        super().mouseMoveEvent(event)
+
+    def mouseReleaseEvent(self, event):
+        if self._drag_last is not None:
+            self._drag_last = None
+            event.accept()
+            return
+        super().mouseReleaseEvent(event)
+
+    def wheelEvent(self, event):
+        self.set_model_scale(self.model_scale * (1.1 if event.delta() > 0 else 1 / 1.1))
+        event.accept()
+
+    # --- rendering -------------------------------------------------------
+    def paint(self, painter, option, widget=None):
+        super().paint(painter, option, widget)
+        rect = self.rect()
+        painter.save()
+        painter.setClipRect(rect)
+
+        if self.is_loading:
+            painter.setPen(QPen(QColor("#f39c12")))
+            painter.drawText(rect, Qt.AlignmentFlag.AlignCenter,
+                             "Loading model...\n(STEP files with many faces can take a while)")
+        elif self.load_error:
+            painter.setPen(QPen(QColor("#e74c3c")))
+            painter.drawText(rect, Qt.AlignmentFlag.AlignCenter, f"Load failed:\n{self.load_error}")
+        elif self.faces is None or len(self.faces) == 0:
+            painter.setPen(QPen(QColor("#888888")))
+            painter.drawText(rect, Qt.AlignmentFlag.AlignCenter,
+                             "No model loaded\nUse Browse in the properties panel")
+        else:
+            import model3d
+            polys, shades, _ = model3d.project(
+                self.vertices, self.faces, self.rot_x, self.rot_y, self.rot_z,
+                self.model_scale, self.model_tx, self.model_ty,
+                rect.width(), rect.height())
+            base = self.model_color
+            painter.setPen(Qt.PenStyle.NoPen)
+            for tri, shade in zip(polys, shades):
+                painter.setBrush(QBrush(QColor(int(base.red() * shade),
+                                               int(base.green() * shade),
+                                               int(base.blue() * shade))))
+                painter.drawPolygon(QPolygonF([QPointF(float(p[0]), float(p[1])) for p in tri]))
+
+        painter.restore()
+
+
 class InteractiveCaptureItem(AnimatableMixin, QGraphicsRectItem):
     """Displays the still held by an Observatory "Image Capture" tool.
 

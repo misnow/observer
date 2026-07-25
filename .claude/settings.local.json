@@ -189,7 +189,9 @@
       "Bash(\"/c/Users/mikes/AppData/Local/Programs/Python/Python312/python.exe\" \"C:\\\\Users\\\\mikes\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\C--Users-mikes-PycharmProjects-lightproject\\\\2b94bdb8-39d7-4575-a146-dbe9b5a960ad\\\\scratchpad\\\\patch_capture2.py\")",
       "Bash(\"/c/Users/mikes/AppData/Local/Programs/Python/Python312/python.exe\" -m py_compile studio.py main.py)",
       "Bash(\"/c/Users/mikes/AppData/Local/Programs/Python/Python312/python.exe\" -c \"import json;d=json.load\\(open\\(r'C:\\\\Users\\\\mikes\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\C--Users-mikes-PycharmProjects-lightproject\\\\2b94bdb8-39d7-4575-a146-dbe9b5a960ad\\\\scratchpad\\\\mig_iso\\\\vision_state.json'\\)\\);print\\('captures:',d.get\\('captures'\\)\\)\")",
-      "Bash(/c/Users/mikes/AppData/Local/Programs/Python/Python312/python.exe -c ' *)"
+      "Bash(/c/Users/mikes/AppData/Local/Programs/Python/Python312/python.exe -c ' *)",
+      "Bash(git add *)",
+      "Bash(git commit -q -m 'Restore Interactive3DModelItem; migrate Image Capture to Observatory *)"
     ]
   }
 }
