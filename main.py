@@ -184,13 +184,21 @@ class ObservatoryEngine(QMainWindow):
 
     def write_vision_state(self):
         """IPC Protocol: Constantly broadcast tool states (and LLM Vision responses) for Studio."""
+        # Written atomically: open(...,"w") truncates to zero length first,
+        # and Studio polls this file every 50ms, so it regularly caught the
+        # empty window and failed to parse ("Expecting value: line 1 column
+        # 1"). Writing to a temp file and renaming means a reader always
+        # sees either the previous complete state or the new one, never a
+        # half-written file. os.replace is atomic on Windows and POSIX.
         try:
-            with open("vision_state.json", "w") as f:
+            tmp = "vision_state.json.tmp"
+            with open(tmp, "w") as f:
                 json.dump({"states": self.tool_states, "responses": self.tool_responses,
                            "response_times": self.tool_response_times,
                            "captures": self.captures}, f)
+            os.replace(tmp, "vision_state.json")
         except Exception:
-            pass  # File might be locked mid-read by Studio
+            pass  # transient FS contention; the next tick rewrites anyway
 
     def check_for_studio_commands(self):
         """IPC Protocol: Listen for file-load commands from Studio Engine."""

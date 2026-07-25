@@ -1178,7 +1178,24 @@ class AuthoringInterface(QMainWindow):
         self.ipc_timer.start(50)
 
         self.enter_design_mode()
-        QTimer.singleShot(500, self.safe_slot(self.launch_observatory))
+        # Opt-in, not automatic: auto-launching Observatory at startup
+        # surprised the user and is only wanted sometimes. The setting
+        # persists, and the "Launch Observatory" button is always there
+        # for launching on demand.
+        if self.settings.value("auto_launch_observatory", False, type=bool):
+            QTimer.singleShot(500, self.safe_slot(self.launch_observatory))
+
+    def _write_command_atomic(self, command):
+        """Write studio_command.json without a torn-read window.
+
+        Observatory polls this file every 500ms. A plain open(...,"w")
+        truncates first, so a poll landing in that window reads an empty
+        file. Temp-file + os.replace makes the swap atomic.
+        """
+        tmp = "studio_command.json.tmp"
+        with open(tmp, "w") as f:
+            json.dump(command, f)
+        os.replace(tmp, "studio_command.json")
 
     def emit_observatory_command(self, filepath=None, force=False):
         if not filepath:
@@ -1204,8 +1221,7 @@ class AuthoringInterface(QMainWindow):
         if filepath and (force or filepath != self.last_commanded_file) and os.path.exists(filepath):
             try:
                 command = {"action": "load_and_start", "filepath": filepath, "timestamp": time.time()}
-                with open("studio_command.json", "w") as f:
-                    json.dump(command, f)
+                self._write_command_atomic(command)
                 self.last_commanded_file = filepath
                 self.log_message(f"Commanded Observatory to load: {os.path.basename(filepath)}")
             except Exception as e:
@@ -1225,8 +1241,7 @@ class AuthoringInterface(QMainWindow):
         try:
             command = {"action": "trigger_llm", "tool_name": item.source_tool, "prompt": item.prompt,
                        "observatory_file": item.observatory_file, "timestamp": time.time()}
-            with open("studio_command.json", "w") as f:
-                json.dump(command, f)
+            self._write_command_atomic(command)
             self.log_message(f"Commanded Observatory: run '{item.source_tool}' with LLM Call '{item.tool_name}' prompt.")
             # Arm the fresh-response tracking used by "Hold for Response":
             # anything already sitting in vision_tool_responses is stale
@@ -1681,6 +1696,13 @@ class AuthoringInterface(QMainWindow):
         btn_launch_obs = QPushButton("👁️ Launch Observatory")
         btn_launch_obs.setStyleSheet("background-color: #3498db; font-weight: bold; color: white;")
         btn_launch_obs.clicked.connect(self.launch_observatory)
+        self.chk_auto_launch = QCheckBox("Auto-launch at startup")
+        self.chk_auto_launch.setToolTip(
+            "Start Observatory automatically when Studio opens.")
+        self.chk_auto_launch.setChecked(
+            self.settings.value("auto_launch_observatory", False, type=bool))
+        self.chk_auto_launch.toggled.connect(
+            lambda v: self.settings.setValue("auto_launch_observatory", bool(v)))
 
         self.lbl_canvas_count = QLabel("  Canvases:")
         self.cb_canvas_count = QComboBox()
@@ -1698,6 +1720,7 @@ class AuthoringInterface(QMainWindow):
         toolbar.addWidget(self.btn_stop)
         toolbar.addStretch()
         toolbar.addWidget(btn_launch_obs)
+        toolbar.addWidget(self.chk_auto_launch)
         main_layout.addLayout(toolbar)
 
         v_splitter = QSplitter(Qt.Orientation.Vertical)
@@ -2060,11 +2083,19 @@ Create an intelligent, multi-step JSON sequence that accomplishes the following 
                 self.vision_captures = data.get("captures", {})
                 self.sync_llm_call_displays()
                 self.sync_capture_items()
+        except OSError:
+            # Transient and expected on Windows: Observatory swaps this file
+            # via os.replace, and a read landing in that instant gets a
+            # sharing violation. Harmless - the next tick (50ms) succeeds.
+            # Measured at ~12% of reads under artificial hammering, far less
+            # at the real 100ms write cadence.
+            pass
         except Exception as e:
-            # This runs on a 50ms timer, so it must not raise into Qt's
-            # dispatch - but swallowing silently hid a real failure here for
-            # a while. Rate-limited so a persistent fault reports itself
-            # without flooding the console 20x a second.
+            # Anything else - notably JSONDecodeError - means genuinely bad
+            # content rather than contention, and should be seen. Swallowing
+            # this silently previously hid a missing method for a whole
+            # session. Rate-limited so a persistent fault can't flood the
+            # console 20x a second.
             now = time.time()
             if now - getattr(self, '_last_ipc_error_log', 0) > 5.0:
                 self._last_ipc_error_log = now
