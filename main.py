@@ -17,7 +17,8 @@ from PyQt6.QtCore import QTimer, Qt, QSettings
 from PyQt6.QtGui import QImage, QPixmap, QAction
 
 # Import local modules
-from vision_tools import img_to_b64, b64_to_img, PerspectivePlaneROI, SearchROI
+from vision_tools import (img_to_b64, b64_to_img, PerspectivePlaneROI, SearchROI,
+                          evaluate_activation)
 from ui_components import DARK_THEME, LLMWorker, VisionCanvasView, ThresholdScoreBar, LLMProviderSettingsWidget
 
 # Try to import MediaPipe for Human Rigging
@@ -486,6 +487,25 @@ class ObservatoryEngine(QMainWindow):
         except Exception as e:
             self.logger(f"Could not open folder: {e}")
 
+    def _refresh_activation_label(self, tool_item):
+        """Show how the last reply scored, guarded like every panel touch."""
+        try:
+            label = getattr(self, 'llm_activation_label', None)
+            if label is None:
+                return
+            mode = getattr(tool_item, 'activation_mode', "Off")
+            if mode == "Off":
+                label.setText("<span style='color:#888;'>Token scoring is off - "
+                              "any reply scores 100.</span>")
+            elif getattr(tool_item, 'activation_hit', False):
+                label.setText(f"<span style='color:#2ecc71;'><b>ACTIVATED</b> - "
+                              f"score {tool_item.current_score}</span>")
+            else:
+                label.setText(f"<span style='color:#e67e22;'>not activated - "
+                              f"score {tool_item.current_score}</span>")
+        except RuntimeError:
+            pass
+
     def _safe_text(self, widget):
         """Read a line edit that the properties panel may already have torn down."""
         try:
@@ -854,6 +874,43 @@ class ObservatoryEngine(QMainWindow):
             txt_prompt.textChanged.connect(lambda i=tool_item, t=txt_prompt: setattr(i, 'llm_prompt', t.toPlainText()))
             self.tool_prop_layout.addRow("LLM Prompt:", txt_prompt)
 
+            self.tool_prop_layout.addRow(QLabel("<hr><b>Activation Token</b>"))
+            cb_act = QComboBox()
+            for label, data in (("Off - any reply scores 100", "Off"),
+                                ("Exact reply is the token (most reliable)", "Exact reply"),
+                                ("Ends with token", "Ends with"),
+                                ("Contains token anywhere", "Contains")):
+                cb_act.addItem(label, data)
+            idx = cb_act.findData(getattr(tool_item, 'activation_mode', "Off"))
+            cb_act.setCurrentIndex(max(0, idx))
+            cb_act.currentIndexChanged.connect(
+                lambda _=0, i=tool_item, c=cb_act: setattr(i, 'activation_mode',
+                                                           c.currentData()))
+            self.tool_prop_layout.addRow("Scoring:", cb_act)
+
+            txt_token = QLineEdit(getattr(tool_item, 'activation_token', "$ACTIVE"))
+            txt_token.textChanged.connect(
+                lambda t, i=tool_item: setattr(i, 'activation_token', t.strip()))
+            self.tool_prop_layout.addRow("Token:", txt_token)
+
+            self.tool_prop_layout.addRow(QLabel(
+                "<i>Seeing the token drives this tool's score to 100 (otherwise "
+                "0), which sets its state for a Studio <b>Vision Wait</b>.<br><br>"
+                "Most reliable — <b>Exact reply</b> with a prompt that allows "
+                "nothing else:<br>"
+                "&nbsp;&nbsp;<tt>Is there a person in this room? Reply with only "
+                "$ACTIVE if yes, or only NONE if no.</tt><br><br>"
+                "<b>Ends with</b> suits the natural phrasing (<tt>...end your "
+                "reply with $ACTIVE</tt>) but cannot fully separate a refusal: "
+                "<i>\"no person, so I will not output $ACTIVE.\"</i> genuinely "
+                "ends with the token. A negation guard catches the common "
+                "phrasings; Exact reply has nothing to guard against.<br>"
+                "<b>Contains</b> is loosest and fires on any mention.</i>"))
+
+            self.llm_activation_label = QLabel()
+            self._refresh_activation_label(tool_item)
+            self.tool_prop_layout.addRow("Last result:", self.llm_activation_label)
+
             btn_send = QPushButton("🧠 Trigger LLM Query")
             btn_send.setStyleSheet("background-color: #9b59b6; font-weight: bold;")
             btn_send.clicked.connect(lambda: self.trigger_llm_tool(tool_item))
@@ -1041,10 +1098,40 @@ class ObservatoryEngine(QMainWindow):
             return
         tool_item.llm_is_processing = False
         tool_item.llm_response = response
-        tool_item.current_score = 100
+
+        # Without an activation token the score just means "a reply arrived",
+        # which is the long-standing behaviour and is left alone. With one, the
+        # score reflects the *content* of the reply, so an LLM tool can gate a
+        # sequence the way the pixel-based tools do.
+        hit = evaluate_activation(response,
+                                  getattr(tool_item, 'activation_token', ""),
+                                  getattr(tool_item, 'activation_mode', "Off"))
+        if hit is None:
+            tool_item.current_score = 100
+        else:
+            tool_item.activation_hit = hit
+            tool_item.current_score = 100 if hit else 0
+            # LLM tools previously never touched tool_states, so they could not
+            # drive a Studio Vision Wait at all. With a token they can.
+            self.tool_states[tool_item.tool_name] = (
+                tool_item.current_score >= tool_item.sensitivity)
+            self.logger(
+                f"LLM tool '{tool_item.tool_name}': "
+                f"{'ACTIVATED' if hit else 'not activated'} "
+                f"(looked for {tool_item.activation_token!r}, "
+                f"mode '{tool_item.activation_mode}') -> score "
+                f"{tool_item.current_score}")
+
         self.tool_responses[tool_item.tool_name] = response
         self.tool_response_times[tool_item.tool_name] = time.time()
         self._safe_set_llm_resp_box(tool_item.llm_response)
+        # Data model first (above), widgets after - the panel may be long gone.
+        self._refresh_activation_label(tool_item)
+        try:
+            if getattr(self, 'score_bar', None) is not None:
+                self.score_bar.set_score(tool_item.current_score)
+        except RuntimeError:
+            pass
 
     def calculate_homography(self, tool_item):
         pts_src = np.array([[p.x() + tool_item.pos().x(), p.y() + tool_item.pos().y()] for p in tool_item.points],
@@ -1524,6 +1611,12 @@ class ObservatoryEngine(QMainWindow):
                         "capture_mode": getattr(item, "capture_mode", "ROI"),
                         "captured_path": getattr(item, "captured_path", ""),
                         "cutout_path": getattr(item, "cutout_path", ""),
+                        # llm_prompt was never saved: a configured prompt
+                        # silently reverted to the default on reload, which
+                        # makes a token-scored LLM tool useless.
+                        "llm_prompt": getattr(item, "llm_prompt", ""),
+                        "activation_mode": getattr(item, "activation_mode", "Off"),
+                        "activation_token": getattr(item, "activation_token", "$ACTIVE"),
                         "raw_ref_frame_b64": img_to_b64(item.raw_reference_frame),
                         "raw_template_b64": img_to_b64(item.raw_trained_template)
                     }
@@ -1612,6 +1705,12 @@ class ObservatoryEngine(QMainWindow):
                     roi.blob_color = t.get("blob_color", 0)
                     roi.blob_max_area = t.get("blob_max_area", 5000)
                     roi.auto_capture_reference = t.get("auto_capture_reference", False)
+
+                    # Fall back to the constructor defaults so projects saved
+                    # before these existed still load.
+                    roi.llm_prompt = t.get("llm_prompt", roi.llm_prompt)
+                    roi.activation_mode = t.get("activation_mode", roi.activation_mode)
+                    roi.activation_token = t.get("activation_token", roi.activation_token)
                     roi.capture_mode = t.get("capture_mode", "ROI")
                     roi.captured_path = t.get("captured_path", "")
                     roi.cutout_path = t.get("cutout_path", "")

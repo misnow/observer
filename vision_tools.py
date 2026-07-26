@@ -1,3 +1,4 @@
+import re
 import cv2
 import numpy as np
 import base64
@@ -186,6 +187,18 @@ class SearchROI(QGraphicsRectItem):
 
         # LLM Properties
         self.llm_prompt = "Describe what is inside this image crop."
+        # Turn a free-text answer into a pass/fail score. Ask the model to end
+        # its reply with a sentinel when some condition holds ("...if a person
+        # is present, end your reply with $ACTIVE"); seeing it drives the score
+        # to 100, which is what makes an LLM tool able to gate a sequence the
+        # same way a Motion or Pattern tool does.
+        #
+        # Mode matters more than it looks. "Ends with" is the default because
+        # "Contains" misfires on a negative answer that quotes the sentinel
+        # back - "no person, so I will not output $ACTIVE" contains $ACTIVE.
+        self.activation_mode = "Off"        # Off | Ends with | Contains
+        self.activation_token = "$ACTIVE"
+        self.activation_hit = False         # last evaluation, for the UI
         self.llm_response = "Waiting for trigger..."
         self.llm_is_processing = False
         self.llm_trigger_time = 0.0
@@ -261,3 +274,85 @@ class SearchROI(QGraphicsRectItem):
 
     def update_handle_pos(self):
         self.handle.setPos(self.rect().width() - 6, self.rect().height() - 6)
+
+# Words that turn a sentence mentioning the sentinel into a refusal to emit
+# it. Only ever consulted within the final clause - see _negated below.
+_NEGATIONS = (" not ", "n't ", " no ", " never ", " without ", " cannot ",
+              " refrain", " withhold", " omit", " skip", " unable")
+
+_TRIM = " \t\r\n.,;:!?\"'`*_()[]{}"
+
+
+def _negated(clause, token):
+    """Does this clause *decline* to emit the token rather than emit it?
+
+    Only the final clause is examined, so "there is no doubt a person is
+    here. $ACTIVE" is not caught by the "no" three words earlier - that
+    belongs to a different sentence.
+    """
+    before = clause.split(token)[0]
+    return any(marker in f" {before} " for marker in _NEGATIONS)
+
+
+def evaluate_activation(response, token, mode):
+    """Did an LLM reply signal activation? None means "not evaluated".
+
+    Matching is case-insensitive and tolerates trailing punctuation, quotes
+    and markdown emphasis, because models routinely wrap a sentinel as
+    `$ACTIVE.` or `**$ACTIVE**`.
+
+    Modes, weakest guarantee last:
+
+      "Exact reply" - the whole reply IS the token. Unambiguous, and what you
+                      get by prompting "reply with only $ACTIVE, or only
+                      $IDLE". Recommended when the decision actually matters.
+      "Ends with"   - the reply's final clause ends with the token. Matches
+                      the natural "...end your reply with $ACTIVE" phrasing,
+                      with a negation guard, but see the caveat below.
+      "Contains"    - the token appears anywhere. Loosest, and false-positives
+                      on any reply that merely mentions the sentinel.
+
+    Caveat worth knowing: "No person is present, so I will not output
+    $ACTIVE." genuinely *ends with* the token, so pure string matching cannot
+    separate it from a real activation. The negation guard catches that common
+    phrasing, but it is a heuristic - "Exact reply" is the one with no
+    ambiguity to guard against.
+    """
+    if not mode or mode == "Off" or not token:
+        return None
+    text = (response or "").strip().lower()
+    tok = token.strip().lower()
+    if not text or not tok:
+        return False
+
+    # Match the token's alphanumeric core, not the literal string. Observed
+    # live on 2026-07-25: asked to "reply with only $ACTIVE", gemini-2.5-flash
+    # answered "ACTIVE" - correct judgement, but it dropped the '$', which
+    # models routinely do because it reads as markup. Literal matching scores
+    # that correct answer as a miss.
+    #
+    # Word boundaries are kept so "$ACTIVE" still does NOT match "proactive".
+    core = re.sub(r"[^a-z0-9_]", "", tok)
+    if not core:
+        return False
+
+    if mode == "Contains":
+        return re.search(rf"(?<![a-z0-9_]){re.escape(core)}(?![a-z0-9_])",
+                         text) is not None
+
+    if mode == "Exact reply":
+        return re.fullmatch(rf"[^a-z0-9_]*{re.escape(core)}[^a-z0-9_]*",
+                            text) is not None
+
+    # "Ends with"
+    tail = text.rstrip(_TRIM)
+    if not re.search(rf"(?<![a-z0-9_]){re.escape(core)}[^a-z0-9_]*$", tail):
+        return False
+    # Look only at the last sentence/clause: a refusal reads as one sentence
+    # ("... so I will not output $ACTIVE"), whereas a genuine activation
+    # leaves the token standing alone after the explanation.
+    last = tail
+    for sep in (". ", "! ", "? ", "\n"):
+        if sep in last:
+            last = last.rsplit(sep, 1)[-1]
+    return not _negated(last, tok)

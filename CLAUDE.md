@@ -139,6 +139,12 @@ assertions in `tests/verify_gemini_segmenter.py`:
   got wrong. One real API call exposed it, and revealed the model returns the
   mask in five different shapes. When a backend is reachable, verify against
   it once and turn what you learn into an offline regression test.
+- **Models don't echo tokens literally.** Asked to "reply with only
+  `$ACTIVE`", gemini-2.5-flash replied `ACTIVE` — correct, but the `$` was
+  gone, and a literal string match scored the right answer as a miss. Match
+  the alphanumeric core with word boundaries. Related: a 429 from the free
+  tier is usually a *per-minute* limit that clears in about a minute, not a
+  dead key — check before concluding anything.
 
 ---
 

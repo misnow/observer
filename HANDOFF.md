@@ -175,6 +175,34 @@ Git repo initialised (3 commits). Working tree clean at `7f62b87`.
   - Gemini has no bounding-box prompt, so the tool's ROI selects among the
     objects it returns rather than constraining it.
 
+- **LLM activation token ($ACTIVE) (done).** An LLM Vision tool can now score
+  on the *content* of the reply: ask the model to answer with a sentinel when
+  a condition holds, and seeing it drives the score to 100. Covered by
+  `tests/verify_llm_activation_token.py` (offline) and
+  `verify_llm_activation_live.py` (one real call).
+  - Previously `handle_llm_result` set `current_score = 100` for **any**
+    reply — the score meant "a response arrived", not "the condition is
+    true" — and LLM tools never touched `tool_states` at all, so they could
+    not gate a Studio **Vision Wait**. Both now work when a token is set.
+    With the mode left `Off` the old behaviour is unchanged.
+  - **`llm_prompt` was never saved.** A configured prompt silently reverted
+    to the default on reload, which made this feature unusable. Now persisted
+    along with the token settings.
+  - **Two findings that only live calls produced:**
+    1. Asked to "reply with only `$ACTIVE`", gemini-2.5-flash answered
+       `ACTIVE` — right judgement, but it **dropped the `$`** (models treat it
+       as markup). Matching is therefore done on the token's *alphanumeric
+       core* with word boundaries, so `$ACTIVE` matches `ACTIVE` but still
+       not `proactive`.
+    2. The free tier rate-limits bursts. A 429 is a per-minute limit that
+       clears in about a minute — not a dead key.
+  - **Mode matters.** `Exact reply` is recommended: the whole reply must be
+    the token, prompted as *"reply with only $ACTIVE if yes, or only NONE if
+    no"*. `Ends with` fits the natural phrasing but cannot fully separate a
+    refusal — *"no person, so I will not output $ACTIVE."* genuinely ends
+    with the token. A negation guard on the final clause catches the common
+    phrasings, but it is a heuristic. `Contains` fires on any mention.
+
 **Known open:**
 1. **Two preserved tests are stale** (they fail identically at HEAD — not
    regressions): `verify_model3d.py` predates Ctrl-drag and its fake event
