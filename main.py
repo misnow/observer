@@ -314,8 +314,12 @@ class ObservatoryEngine(QMainWindow):
             self.logger(f"Capture error for '{tool_item.tool_name}': {e}")
             return None
 
-    def segment_tool_capture(self, tool_item, backend="grabcut"):
-        """Segment an Image Capture tool's still into a transparent cutout."""
+    def segment_tool_capture(self, tool_item, backend="grabcut", target=""):
+        """Segment an Image Capture tool's still into a transparent cutout.
+
+        `target` names the subject for backends that take a text prompt
+        (Gemini); the local backends ignore it.
+        """
         try:
             import segmenter as _seg
             path = getattr(tool_item, 'captured_path', "")
@@ -337,9 +341,24 @@ class ObservatoryEngine(QMainWindow):
                 bbox = (m, m, w - 2 * m, h - 2 * m)
             else:
                 bbox = (int(w * 0.1), int(h * 0.1), int(w * 0.8), int(h * 0.8))
-            self._safe_set_label('segment_status_label', "Segmenting...")
+            if backend == "gemini":
+                self._safe_set_label('segment_status_label',
+                                     "Uploading to Gemini and segmenting...")
+                self.logger(f"Segmenting '{tool_item.tool_name}' with Gemini - "
+                            f"the capture is uploaded to Google for this.")
+            else:
+                self._safe_set_label('segment_status_label', "Segmenting...")
 
-            worker = _seg.SegmentWorker(path, out_path, bbox=bbox, backend=backend)
+            # The key is read straight from settings and handed to the worker;
+            # it is never written into a project file or a log line.
+            worker = _seg.SegmentWorker(
+                path, out_path, bbox=bbox, backend=backend,
+                api_key=str(self.settings.value("gemini_api_key",
+                                                self.settings.value("api_key", "")) or ""),
+                model=str(self.settings.value("gemini_segment_model",
+                                              _seg.DEFAULT_GEMINI_MODEL) or
+                          _seg.DEFAULT_GEMINI_MODEL),
+                target=target)
 
             def done(result, error, it=tool_item, wk=worker):
                 # Queued cross-thread slot: the properties panel may have been
@@ -466,6 +485,13 @@ class ObservatoryEngine(QMainWindow):
                 self.logger("Nothing to reveal - that file doesn't exist yet.")
         except Exception as e:
             self.logger(f"Could not open folder: {e}")
+
+    def _safe_text(self, widget):
+        """Read a line edit that the properties panel may already have torn down."""
+        try:
+            return widget.text().strip()
+        except RuntimeError:
+            return ""
 
     def _safe_set_path_field(self, attr, path):
         try:
@@ -873,11 +899,21 @@ class ObservatoryEngine(QMainWindow):
 
             self.tool_prop_layout.addRow(QLabel("<hr><b>AI Segmenter</b>"))
             import segmenter as _seg
+            has_key = bool(self.settings.value("gemini_api_key",
+                                               self.settings.value("api_key", "")))
             cb_backend = QComboBox()
-            for name, (ok, msg) in _seg.backend_status().items():
+            for name, (ok, msg) in _seg.backend_status(api_key="x" if has_key else "").items():
                 cb_backend.addItem(f"{name}{'' if ok else '  (unavailable)'}", name)
                 cb_backend.setItemData(cb_backend.count() - 1, msg, Qt.ItemDataRole.ToolTipRole)
             self.tool_prop_layout.addRow("Backend:", cb_backend)
+
+            self.segment_target_input = QLineEdit()
+            self.segment_target_input.setPlaceholderText(
+                "e.g. the bracket  (Gemini only; blank = main foreground object)")
+            self.tool_prop_layout.addRow("Subject:", self.segment_target_input)
+            self.tool_prop_layout.addRow(QLabel(
+                "<i>grabcut runs locally. <b>gemini uploads this capture to Google</b> "
+                "and uses your AI Studio API key.</i>"))
 
             self.segment_status_label = QLabel(
                 os.path.basename(tool_item.cutout_path) if getattr(tool_item, 'cutout_path', "")
@@ -899,7 +935,8 @@ class ObservatoryEngine(QMainWindow):
             btn_seg = QPushButton("✂️ Segment Capture")
             btn_seg.setStyleSheet("background-color: #16a085; font-weight: bold;")
             btn_seg.clicked.connect(
-                lambda _=False, i=tool_item, c=cb_backend: self.segment_tool_capture(i, c.currentData()))
+                lambda _=False, i=tool_item, c=cb_backend, t=self.segment_target_input:
+                self.segment_tool_capture(i, c.currentData(), self._safe_text(t)))
             self.tool_prop_layout.addRow(btn_seg)
 
         elif tool_item.tool_type == "Blob Detection":

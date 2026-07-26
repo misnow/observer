@@ -106,6 +106,23 @@ content replacement with an assert on match count.
 
 ---
 
+## Handling API keys
+
+Both apps read provider keys from `QSettings("LightGuide", "Observatory")` —
+the Windows registry, never a file in this repo. Three rules, each enforced by
+assertions in `tests/verify_gemini_segmenter.py`:
+
+1. **Header, never URL.** `x-goog-api-key`, not `?key=`. Query strings land in
+   proxy and server logs. `ui_components._run_gemini` got this wrong until
+   2026-07-25.
+2. **Redact before emitting.** `ui_components.redact()` / `segmenter._redact()`
+   scrub the key from any error string. LLM errors are shown on screen *and*
+   written into `vision_state.json`, so an unredacted one puts a live key on
+   disk.
+3. **Never serialize a key** into a project file.
+
+---
+
 ## Verification habits that paid off
 
 - Drive the real code path, not a mock. Several bugs only appeared through a
@@ -116,6 +133,12 @@ content replacement with an assert on match count.
 - Assert on *quality*, not just absence of exceptions — e.g. segmentation is
   checked against a known-truth mask (IoU), STEP export is re-imported
   through OpenCASCADE and volume-checked.
+- **Mocks agree with your assumptions; live services don't.** The Gemini
+  segmenter passed a full mocked suite while silently shrinking every mask to
+  a quarter of its area — the offline fixtures happened to tie the decision it
+  got wrong. One real API call exposed it, and revealed the model returns the
+  mask in five different shapes. When a backend is reachable, verify against
+  it once and turn what you learn into an offline regression test.
 
 ---
 
@@ -129,6 +152,7 @@ content replacement with an assert on match count.
 - `segmenter.py` supports SAM3/SAM2 detection but its predictor API is
   **not wired** — it raises a clear message rather than guessing at an
   unverified API. SAM3 is real (`facebookresearch/sam3`); PyPI packages of
-  that name are third-party repackagings.
+  that name are third-party repackagings. (The `gemini` backend *is* wired
+  and verified live.)
 - No local image→3D model. That step is external (TripoSR local, or
   Tripo/Meshy API). Everything either side of it is built.

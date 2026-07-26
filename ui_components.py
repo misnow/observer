@@ -5,6 +5,23 @@ from PyQt6.QtWidgets import QWidget, QGraphicsView, QFormLayout, QComboBox, QLin
 from PyQt6.QtCore import pyqtSignal, Qt, QThread, QRect
 from PyQt6.QtGui import QColor, QPen, QFont, QPainter
 
+
+def redact(text, *secrets):
+    """Scrub API keys out of anything headed for a log, a UI label, or disk.
+
+    Errors from an HTTP stack routinely quote the request that failed. In this
+    app an LLM error string is both shown on screen and written into
+    vision_state.json, so an unredacted one would put a live API key in a file
+    on disk. Short strings are ignored so an empty or placeholder key can't
+    blank out the whole message.
+    """
+    out = str(text)
+    for secret in secrets:
+        secret = str(secret or "").strip()
+        if len(secret) >= 8:
+            out = out.replace(secret, "***REDACTED***")
+    return out
+
 # Professional Dark Theme Stylesheet
 DARK_THEME = """
 QWidget { background-color: #2b2b2b; color: #a9b7c6; font-family: 'Segoe UI', Arial; }
@@ -69,16 +86,24 @@ class LLMWorker(QThread):
         self.response = ""
 
     def run(self):
+        # Every exit path is redacted. LLM responses are written to
+        # vision_state.json and shown in the on-screen log, so an error string
+        # that happened to echo a request URL or header would persist the API
+        # key to disk. Cheap insurance against a leak that would be invisible.
+        secret = str(self.config.get("api_key", "") or "")
         try:
             if self.config.get("provider") == "OpenAI-Compatible":
                 self._run_openai_compatible()
             else:
                 self._run_gemini()
         except urllib.error.HTTPError as e:
-            error_msg = e.read().decode('utf-8')
-            self.finished.emit(f"API Error ({e.code}): {error_msg}")
+            try:
+                error_msg = e.read().decode('utf-8')
+            except Exception:
+                error_msg = str(e)
+            self.finished.emit(redact(f"API Error ({e.code}): {error_msg}", secret))
         except Exception as e:
-            self.finished.emit(f"Connection Error: {str(e)}")
+            self.finished.emit(redact(f"Connection Error: {e}", secret))
 
     def _post_json(self, url, payload, headers):
         data = json.dumps(payload).encode('utf-8')
@@ -92,13 +117,20 @@ class LLMWorker(QThread):
             self.finished.emit("Error: Gemini API Key not provided.")
             return
 
-        url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key={api_key}"
+        # The key travels in a header, NOT in the query string. A secret in a
+        # URL is recorded by proxies and server access logs and leaks into any
+        # error text that echoes the URL; Google documents this header for
+        # exactly that reason.
+        url = ("https://generativelanguage.googleapis.com/v1beta/models/"
+               "gemini-2.5-flash:generateContent")
 
         parts = [{"text": self.prompt}]
         if self.base64_image:
             parts.append({"inline_data": {"mime_type": "image/png", "data": self.base64_image}})
 
-        result = self._post_json(url, {"contents": [{"parts": parts}]}, {'Content-Type': 'application/json'})
+        result = self._post_json(url, {"contents": [{"parts": parts}]},
+                                 {'Content-Type': 'application/json',
+                                  'x-goog-api-key': api_key})
         self.response = result['candidates'][0]['content']['parts'][0]['text']
         self.finished.emit(self.response)
 

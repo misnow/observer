@@ -48,6 +48,21 @@ C:\Users\mikes\AppData\Local\Programs\Python\Python312\python.exe main.py
 
 **No secrets are stored in this repo, and none belong here.**
 
+Handling rules now enforced in code (see `tests/verify_gemini_segmenter.py`,
+which asserts every one of these):
+
+- The API key goes in the **`x-goog-api-key` header, never the URL**. A secret
+  in a query string is recorded by proxy and server access logs. This was a
+  real defect — `ui_components._run_gemini` used `?key=` until 2026-07-25.
+- **Error text is redacted** before it is emitted (`ui_components.redact`,
+  `segmenter._redact`). This matters here because LLM error strings are shown
+  on screen *and* written into `vision_state.json` — an unredacted one would
+  put a live key in a file on disk.
+- **No save path serializes a key.** Project files never contain one.
+- QSettings is the Windows registry (`HKEY_CURRENT_USER\Software\LightGuide`),
+  not a file in the repo, so a key cannot be committed by accident.
+- Key fields use `QLineEdit.EchoMode.Password`.
+
 All provider config lives in Windows `QSettings("LightGuide", "Observatory")`
 — a namespace **shared by both apps**, so configuring in either affects both.
 Keys: `llm_provider`, `gemini_api_key`, `openai_base_url`, `openai_model`,
@@ -134,6 +149,31 @@ Git repo initialised (3 commits). Working tree clean at `7f62b87`.
   - The **Gemini OCR backend is written but NOT verified end to end** — it
     needs a real API key to exercise. The rapidocr path is fully verified.
     Note a Google AI Pro subscription does *not* grant API access.
+
+- **Gemini segmentation backend (done, verified live).** `segmenter.py` gained
+  a `"gemini"` backend beside `grabcut`; selectable per Image Capture tool,
+  with an optional "Subject" prompt. The UI states plainly that the capture is
+  uploaded to Google.
+  - **Verified against the real API**, not just mocked — which mattered. The
+    documented mask format (a flat polygon) is only one of **five** shapes the
+    model actually emits: a CSV string, a flat number list, a list wrapping a
+    flat list, a list of `[x,y]` pairs, and a list of rings of pairs. The
+    request now pins a `responseSchema` to stop the variance, and `_as_rings`
+    accepts all five anyway.
+  - **A bug the offline tests missed.** The decoder chose between the
+    whole-image and box-relative coordinate readings by "how much lands inside
+    box_2d" — but a box-relative polygon is inside the box *by construction*
+    and always scored 1.0, so it always won and every mask came back shrunk to
+    roughly a quarter of its area (4–11% coverage against a true 20.8%). The
+    offline suite passed regardless, because a polygon strictly inside the box
+    ties and the tie-break happened to pick right; only a live response, whose
+    polygon fills box_2d exactly, broke the tie. Now scored by extent
+    agreement, with a regression test for exactly that case.
+  - **Quality varies run to run**: IoU 0.574, 0.751, 0.801, 0.825, 0.837 over
+    five calls on the same synthetic fixture. Expect variance; a *consistently*
+    low score would indicate decoding, not the model.
+  - Gemini has no bounding-box prompt, so the tool's ROI selects among the
+    objects it returns rather than constraining it.
 
 **Known open:**
 1. **Two preserved tests are stale** (they fail identically at HEAD — not
