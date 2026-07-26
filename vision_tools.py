@@ -163,7 +163,19 @@ class SearchROI(QGraphicsRectItem):
         self.camera_index = 0
 
         # Core Properties
-        self.threshold = 127
+        # "threshold" means different things per tool type, so its default
+        # has to be per-type rather than one shared number:
+        #   Motion Detection / Delete - a per-pixel frame-difference cutoff
+        #     (0-255). 127 demanded that a pixel change by half the full
+        #     dynamic range, which ordinary motion under normal lighting
+        #     never reaches, so nothing triggered until the slider was
+        #     dragged all the way left. Real inter-frame deltas sit around
+        #     10-40, so 25 is the useful starting point.
+        #   Blob Detection - a *minimum contour area* in pixels, where 127
+        #     is a sensible floor. Changing the shared default would have
+        #     silently altered blob behaviour too.
+        self.threshold = 25 if tool_type in ("Motion Detection",
+                                             "Delete (Missing Object)") else 127
         self.sensitivity = 50
         self.min_area = 100
 

@@ -779,6 +779,10 @@ class InteractiveCaptureItem(AnimatableMixin, QGraphicsRectItem):
         self.last_shown_time = 0.0
         # Transparent-background cutout produced by the segmenter, if run.
         self.cutout_path = ""
+        # Which of the source tool's two images to mirror: the raw capture,
+        # or the transparent cutout the segmenter produced from it. Both are
+        # published by Observatory; this picks which one lands on the canvas.
+        self.source_variant = "Captured"
         self.is_blinking = False
 
         self.setFlags(QGraphicsItem.GraphicsItemFlag.ItemIsMovable |

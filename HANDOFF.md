@@ -86,16 +86,51 @@ Git repo initialised (3 commits). Working tree clean at `7f62b87`.
   restored), real `main()` launch, clean exit, no Event Viewer entries.
   Covered by `tests/verify_canvas_items_split.py`.
 
+- **Observatory/Studio fix round (done).** Covered by
+  `tests/verify_observatory_studio_fixes.py`:
+  1. *Camera switching* now moves the live feed. `currentIndexChanged` was
+     wired only to tool-visibility, so picking a device left the old one
+     streaming. `toggle_camera` was split into `start_camera_feed` /
+     `stop_camera_feed`, reused by `on_camera_selection_changed`.
+     `current_raw_frame` is cleared on stop so a capture straight after a
+     switch can't save a frame from the previous camera.
+  2. *Motion "Pixel Diff Thresh"* defaulted to **127** — half the full 0-255
+     range, which ordinary motion never reaches, so nothing triggered until
+     the slider was dragged fully left. Now 25. **The same `threshold` field
+     is a minimum contour area for Blob Detection**, so the default is set
+     per tool type in `SearchROI.__init__`, not globally — verified by
+     `verify_blob_revert.py` still passing.
+  3. *Capture/cutout locations* — the panel showed a bare basename. Now a
+     read-only full path with a "reveal in Explorer" button, plus a cutout
+     thumbnail beside the existing capture thumbnail.
+  4. *Raw vs segmented source* — the cutout was **never broadcast** to
+     Studio, so it had no route onto the canvas. Observatory now publishes
+     `cutout_path`/`cutout_time` in the `captures` payload; the Studio
+     capture item gained a `source_variant` picker that persists in the
+     project file.
+  5. *Studio File→New* — `new_file()` already existed but was only reachable
+     internally. Added a confirmed `new_project()` wrapper to the File menu.
+
 **Known open:**
 1. **Two preserved tests are stale** (they fail identically at HEAD — not
    regressions): `verify_model3d.py` predates Ctrl-drag and its fake event
    lacks `modifiers()`; `verify_worker_crashfix.py` still expects
    `InteractiveCaptureItem.roi`, deliberately removed in the Image Capture
-   migration. Both need their stubs updated to match current behaviour.
-2. **Intermittent `0xC0000409` on exit.** Unresolved. Last occurrence logged
-   Observatory auto-capturing during shutdown, suggesting a timer still
-   firing during teardown — **a lead, not a diagnosis.** `closeEvent` already
-   stops web views, videos, and waits on workers.
+   migration. `verify_blob_revert.py` merely has a dead log path (exits 127
+   with empty output — see CLAUDE.md on why that code lies); with the path
+   redirected it passes in full.
+2. **Intermittent `0xC0000409` on exit.** Still unresolved. New evidence
+   from `%LOCALAPPDATA%\CrashDumps`: the dumps arrive in **pairs seconds
+   apart with different memory footprints (~75MB and ~105MB)** — i.e.
+   Studio *and* Observatory going down together, not one process. Recorded
+   on 2026-07-25 at 11:39, 14:37, 17:35, 20:30 and 20:57. The 20:57 pair is
+   the session that produced the AVI/h264+mp3 traceback.
+   **Untested hypothesis:** `closeEvent` calls `stop_video()`, which stops
+   the player but never clears `setVideoOutput(...)`. The
+   `QGraphicsVideoItem` is a *child* of the media item, so Qt can destroy
+   the sink while `QMediaPlayer` still points at it; `QAudioOutput` teardown
+   ordering is a second candidate. **A lead, not a diagnosis** — it did not
+   reproduce across a full suite sweep plus a real `main()` launch.
 3. `segmenter.py` detects SAM3/SAM2 but its predictor API is **not wired** —
    raises a clear message rather than guessing at an unverified API. SAM3 is
    real (`facebookresearch/sam3`, 11k stars); PyPI packages of that name are

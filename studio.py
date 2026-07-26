@@ -438,6 +438,7 @@ class AuthoringInterface(QMainWindow):
                         {"type": "InteractiveCaptureItem", "pos": [asset.pos().x(), asset.pos().y()],
                          "item_name": asset.item_name, "observatory_file": asset.observatory_file,
                          "source_tool": asset.source_tool,
+                         "source_variant": getattr(asset, "source_variant", "Captured"),
                          "image_path": asset.image_path,
                          "scale_x": asset.scale_x, "scale_y": asset.scale_y,
                          "scale_factor": asset.scale_factor,
@@ -637,6 +638,7 @@ class AuthoringInterface(QMainWindow):
                             child_data.get("observatory_file", ""),
                             child_data.get("source_tool", "None"))
                         new_item.trigger.__dict__.update(child_data.get("trigger", {}))
+                        new_item.source_variant = child_data.get("source_variant", "Captured")
                         new_item.setPos(*child_data.get("pos", [200.0, 200.0]))
                         new_item.setRotation(child_data.get("rotation", 0))
                         new_item.load_capture(child_data.get("image_path", ""))
@@ -722,6 +724,8 @@ class AuthoringInterface(QMainWindow):
     def setup_ui(self):
         menu_bar = self.menuBar()
         file_menu = menu_bar.addMenu("File")
+        file_menu.addAction("New Project", self.new_project)
+        file_menu.addSeparator()
         file_menu.addAction("Save Project", self.save_project)
         file_menu.addAction("Load Project", self.load_project)
 
@@ -1180,8 +1184,16 @@ Create an intelligent, multi-step JSON sequence that accomplishes the following 
             info = self.vision_captures.get(item.source_tool)
             if not info:
                 continue
-            when = info.get("time", 0)
-            if when > item.last_shown_time and item.load_capture(info.get("path", "")):
+            # The tool publishes both its raw capture and (once segmented)
+            # its cutout, each with its own timestamp, so switching variant
+            # picks a different image *and* a different freshness clock.
+            if getattr(item, 'source_variant', "Captured") == "Segmented Cutout":
+                path, when = info.get("cutout_path", ""), info.get("cutout_time", 0)
+            else:
+                path, when = info.get("path", ""), info.get("time", 0)
+            if not path:
+                continue
+            if when > item.last_shown_time and item.load_capture(path):
                 item.last_shown_time = when
                 self.log_message(f"Capture '{item.item_name}' updated from "
                                  f"Observatory tool '{item.source_tool}'.")
@@ -1549,9 +1561,31 @@ Create an intelligent, multi-step JSON sequence that accomplishes the following 
                 cb_source.currentTextChanged.connect(lambda v: setattr(item, "source_tool", v))
                 self.prop_form.addRow("Capture Tool:", cb_source)
 
-                self.prop_form.addRow("Image:", QLabel(
-                    os.path.basename(item.image_path) if item.image_path
-                    else "<i>Nothing captured yet</i>"))
+                cb_variant = QComboBox()
+                cb_variant.addItems(["Captured", "Segmented Cutout"])
+                cb_variant.setCurrentText(getattr(item, 'source_variant', "Captured"))
+
+                def on_variant_changed(v, i=item):
+                    i.source_variant = v
+                    # Force the next IPC tick to reload. The newly chosen
+                    # variant's timestamp is usually OLDER than what we last
+                    # displayed, so without resetting this the freshness
+                    # check would reject it and the image would never swap.
+                    i.last_shown_time = 0.0
+
+                cb_variant.currentTextChanged.connect(on_variant_changed)
+                self.prop_form.addRow("Show:", cb_variant)
+                self.prop_form.addRow(QLabel(
+                    "<i><b>Captured</b> is the raw still. <b>Segmented Cutout</b> is the "
+                    "transparent-background version - it only appears once that tool has "
+                    "actually been segmented in Observatory.</i>"))
+
+                img_path_field = QLineEdit(item.image_path or "")
+                img_path_field.setReadOnly(True)
+                img_path_field.setPlaceholderText("Nothing captured yet")
+                img_path_field.setToolTip(item.image_path or "")
+                img_path_field.setCursorPosition(0)
+                self.prop_form.addRow("Image:", img_path_field)
 
                 spin_rot = QSpinBox(); spin_rot.setRange(0, 359)
                 spin_rot.setValue(int(item.rotation()))
@@ -2299,6 +2333,30 @@ Create an intelligent, multi-step JSON sequence that accomplishes the following 
         self.highlight_current_run_step()
 
         self.engine_prev_vision_states = self.vision_tool_states.copy()
+
+    def new_project(self):
+        """File -> New. Confirms first, because this discards unsaved work.
+
+        new_file() itself stays unprompted: load_project() calls it
+        internally when it meets an outdated project format, and a second
+        dialog in the middle of a failed load would just be noise.
+        """
+        confirm = QMessageBox.question(
+            self, "New Project",
+            "Clear the sequence and every canvas and start a new Studio project?"
+            "\n\nAny unsaved work will be lost.",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No)
+        if confirm != QMessageBox.StandardButton.Yes:
+            return
+        # Leave Run Mode before emptying the tree: the sequence engine holds
+        # references to tree items, and tearing them out from under a running
+        # sequence leaves it pointing at deleted objects. Both calls are
+        # idempotent, so this is safe even when already in Design Mode.
+        self.stop_sequence()
+        self.enter_design_mode()
+        self.new_file()
+        self.log_message("New project started.")
 
     def new_file(self):
         self.active_item = None

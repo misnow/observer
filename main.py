@@ -3,6 +3,7 @@ import os
 import json
 import base64
 import time
+import subprocess
 
 # Silence OpenCV C++ probing errors
 os.environ["OPENCV_LOG_LEVEL"] = "FATAL"
@@ -306,6 +307,7 @@ class ObservatoryEngine(QMainWindow):
             self.logger(f"Captured {tool_item.capture_mode.lower()} for '{tool_item.tool_name}' "
                         f"({image.shape[1]}x{image.shape[0]}).")
             self._safe_set_label('capture_status_label', os.path.basename(path))
+            self._safe_set_path_field('capture_path_field', path)
             self.update_capture_thumbnail(tool_item)
             return path
         except Exception as e:
@@ -350,6 +352,14 @@ class ObservatoryEngine(QMainWindow):
                     self._safe_set_label('segment_status_label', str(error)[:80])
                 else:
                     it.cutout_path = result["path"]
+                    # Publish the cutout next to the raw capture so Studio can
+                    # offer it as a selectable source. Previously the cutout
+                    # never left Observatory, so a segmented image simply had
+                    # no route onto the canvas. Data model first, widgets
+                    # after - a torn-down panel must not cost us the result.
+                    entry = self.captures.setdefault(it.tool_name, {})
+                    entry["cutout_path"] = result["path"]
+                    entry["cutout_time"] = time.time()
                     pct = result["coverage"] * 100
                     # A near-empty mask means the segmenter found nothing.
                     # Saying so beats handing over a blank PNG that only
@@ -365,6 +375,9 @@ class ObservatoryEngine(QMainWindow):
                                     f"({pct:.1f}% coverage)")
                         self._safe_set_label('segment_status_label',
                                              f"{os.path.basename(result['path'])} ({pct:.1f}%)")
+                    # Both guarded internally; safe if the panel is long gone.
+                    self.update_cutout_thumbnail(it)
+                    self._safe_set_path_field('cutout_path_field', it.cutout_path)
                 try:
                     if wk in self._seg_workers:
                         self._seg_workers.remove(wk)
@@ -390,18 +403,77 @@ class ObservatoryEngine(QMainWindow):
             pass   # panel rebuilt; the underlying C++ widget is gone
 
     def update_capture_thumbnail(self, tool_item):
+        self._set_thumbnail('capture_thumb_label',
+                            getattr(tool_item, 'captured_path', ""), "No capture")
+
+    def update_cutout_thumbnail(self, tool_item):
+        self._set_thumbnail('cutout_thumb_label',
+                            getattr(tool_item, 'cutout_path', ""), "Not segmented")
+
+    def _set_thumbnail(self, attr, path, empty_text):
+        """Shared thumbnail painter for the capture and cutout previews.
+
+        Guarded like every other worker-reachable widget touch: the
+        properties panel is rebuilt constantly, so this QLabel may already be
+        a destroyed C++ object by the time a segmentation finishes.
+        """
         try:
-            lbl = getattr(self, 'capture_thumb_label', None)
+            lbl = getattr(self, attr, None)
             if lbl is None:
                 return
-            path = getattr(tool_item, 'captured_path', "")
-            if path and os.path.exists(path):
-                lbl.setPixmap(QPixmap(path).scaled(
-                    160, 120, Qt.AspectRatioMode.KeepAspectRatio,
-                    Qt.TransformationMode.SmoothTransformation))
+            pix = QPixmap(path) if path and os.path.exists(path) else QPixmap()
+            if not pix.isNull():
+                lbl.setPixmap(pix.scaled(160, 120, Qt.AspectRatioMode.KeepAspectRatio,
+                                         Qt.TransformationMode.SmoothTransformation))
             else:
                 lbl.clear()
-                lbl.setText("No capture")
+                lbl.setText(empty_text)
+        except RuntimeError:
+            pass
+
+    def _make_path_row(self, path):
+        """Read-only, selectable *full* path plus a button that reveals it in
+        Explorer.
+
+        Showing only the basename left no way to tell where a capture or
+        cutout had actually been written - which matters here because the
+        location depends on the process working directory, not the project
+        file. Returns (row_widget, field) so callers can keep the field to
+        update later.
+        """
+        row = QWidget()
+        lay = QHBoxLayout(row)
+        lay.setContentsMargins(0, 0, 0, 0)
+        field = QLineEdit(path or "")
+        field.setReadOnly(True)
+        field.setPlaceholderText("(none yet)")
+        field.setToolTip(path or "")
+        field.setCursorPosition(0)
+        lay.addWidget(field)
+        btn = QPushButton("📂")
+        btn.setFixedWidth(32)
+        btn.setToolTip("Reveal in Explorer")
+        btn.setEnabled(bool(path) and os.path.exists(path))
+        btn.clicked.connect(lambda _=False, p=path: self.reveal_in_explorer(p))
+        lay.addWidget(btn)
+        return row, field
+
+    def reveal_in_explorer(self, path):
+        try:
+            if path and os.path.exists(path):
+                subprocess.Popen(["explorer", f"/select,{os.path.normpath(path)}"])
+            else:
+                self.logger("Nothing to reveal - that file doesn't exist yet.")
+        except Exception as e:
+            self.logger(f"Could not open folder: {e}")
+
+    def _safe_set_path_field(self, attr, path):
+        try:
+            field = getattr(self, attr, None)
+            if field is not None:
+                field.setText(path or "")
+                field.setToolTip(path or "")
+                field.setCursorPosition(0)
         except RuntimeError:
             pass
 
@@ -471,9 +543,10 @@ class ObservatoryEngine(QMainWindow):
         self.camera_selector = QComboBox()
         self.populate_cameras()
         # Switching which camera you're viewing swaps which camera's tools
-        # are shown/evaluated, without disturbing the others.
+        # are shown/evaluated, without disturbing the others, and moves the
+        # live feed itself to the newly selected device.
         self.camera_selector.currentIndexChanged.connect(
-            lambda _: self.sync_tool_visibility_to_camera())
+            lambda _: self.on_camera_selection_changed())
         toolbar.addWidget(self.camera_selector)
 
         self.btn_toggle_cam = QPushButton("Start Camera Feed")
@@ -708,8 +781,27 @@ class ObservatoryEngine(QMainWindow):
             slider_thresh = QSlider(Qt.Orientation.Horizontal)
             slider_thresh.setRange(1, 255)
             slider_thresh.setValue(tool_item.threshold)
-            slider_thresh.valueChanged.connect(lambda v, i=tool_item: self.update_tool_val(i, 'threshold', v))
-            self.tool_prop_layout.addRow("Pixel Diff Thresh:", slider_thresh)
+            lbl_thresh_val = QLabel(str(tool_item.threshold))
+            lbl_thresh_val.setFixedWidth(32)
+            row_thresh = QWidget()
+            lay_thresh = QHBoxLayout(row_thresh)
+            lay_thresh.setContentsMargins(0, 0, 0, 0)
+            lay_thresh.addWidget(slider_thresh)
+            lay_thresh.addWidget(lbl_thresh_val)
+
+            def _on_thresh_changed(v, i=tool_item, lbl=lbl_thresh_val):
+                self.update_tool_val(i, 'threshold', v)
+                try:
+                    lbl.setText(str(v))
+                except RuntimeError:
+                    pass   # panel rebuilt under us
+
+            slider_thresh.valueChanged.connect(_on_thresh_changed)
+            self.tool_prop_layout.addRow("Pixel Diff Thresh:", row_thresh)
+            self.tool_prop_layout.addRow(QLabel(
+                "<i>How far a pixel must change to count as motion (1-255). "
+                "Lower = more sensitive. Real inter-frame deltas are usually "
+                "10-40, so values much above ~60 will rarely trigger.</i>"))
 
             slider_area = QSlider(Qt.Orientation.Horizontal)
             slider_area.setRange(10, 5000)
@@ -769,6 +861,10 @@ class ObservatoryEngine(QMainWindow):
             self.capture_status_label.setStyleSheet("color: #2ecc71;")
             self.tool_prop_layout.addRow("Captured:", self.capture_status_label)
 
+            cap_row, self.capture_path_field = self._make_path_row(
+                getattr(tool_item, 'captured_path', ""))
+            self.tool_prop_layout.addRow("File:", cap_row)
+
             self.capture_thumb_label = QLabel()
             self.capture_thumb_label.setFixedSize(160, 120)
             self.capture_thumb_label.setStyleSheet("background-color: #1e1e1e; border: 1px dashed #555;")
@@ -788,6 +884,17 @@ class ObservatoryEngine(QMainWindow):
                 else "<i>Not segmented</i>")
             self.segment_status_label.setWordWrap(True)
             self.tool_prop_layout.addRow("Cutout:", self.segment_status_label)
+
+            cut_row, self.cutout_path_field = self._make_path_row(
+                getattr(tool_item, 'cutout_path', ""))
+            self.tool_prop_layout.addRow("File:", cut_row)
+
+            self.cutout_thumb_label = QLabel()
+            self.cutout_thumb_label.setFixedSize(160, 120)
+            self.cutout_thumb_label.setStyleSheet(
+                "background-color: #1e1e1e; border: 1px dashed #555;")
+            self.tool_prop_layout.addRow("Cutout Preview:", self.cutout_thumb_label)
+            self.update_cutout_thumbnail(tool_item)
 
             btn_seg = QPushButton("✂️ Segment Capture")
             btn_seg.setStyleSheet("background-color: #16a085; font-weight: bold;")
@@ -1135,26 +1242,68 @@ class ObservatoryEngine(QMainWindow):
             if cap.isOpened(): self.camera_selector.addItem(f"Camera {i} (DSHOW)", i); cap.release()
         if self.camera_selector.count() == 0: self.camera_selector.addItem("No Cameras Found", 0)
 
+    def stop_camera_feed(self):
+        """Release the capture device and blank the view.
+
+        Safe to call when nothing is running. current_raw_frame is cleared
+        too: leaving the last frame of the *previous* camera lying around
+        means a capture taken right after a switch would silently save an
+        image from the camera you just switched away from.
+        """
+        self.timer.stop()
+        try:
+            if self.camera is not None:
+                self.camera.release()
+        except Exception:
+            pass
+        self.camera = None
+        self.current_raw_frame = None
+        self.video_frame_item.setPixmap(QPixmap())
+        self.btn_toggle_cam.setText("Start Camera Feed")
+
+    def start_camera_feed(self):
+        """Open whichever device the Camera Device combo currently selects."""
+        self.camera_index = self.camera_selector.currentData()
+        if self.camera_index is None:
+            return False
+        self.camera = cv2.VideoCapture(self.camera_index, cv2.CAP_DSHOW)
+        self.camera.set(cv2.CAP_PROP_FRAME_WIDTH, 1280)
+        self.camera.set(cv2.CAP_PROP_FRAME_HEIGHT, 720)
+        if not self.camera.isOpened():
+            # Report it: a camera that silently fails to open looks identical
+            # to one that opened but sees black.
+            self.logger(f"Could not open camera {self.camera_index}.")
+            self.btn_toggle_cam.setText("Start Camera Feed")
+            return False
+        self.timer.start(30)
+        self.btn_toggle_cam.setText("Stop Camera Feed")
+        # Give every auto-capture tool a fresh chance to re-train on
+        # this camera session, in case its position shifted since
+        # last time.
+        for item in self.cam_scene.items():
+            if hasattr(item, 'has_auto_captured'):
+                item.has_auto_captured = False
+        return True
+
     def toggle_camera(self):
         if self.timer.isActive():
-            self.timer.stop()
-            self.camera.release()
-            self.video_frame_item.setPixmap(QPixmap())
-            self.btn_toggle_cam.setText("Start Camera Feed")
+            self.stop_camera_feed()
         else:
-            self.camera_index = self.camera_selector.currentData()
-            self.camera = cv2.VideoCapture(self.camera_index, cv2.CAP_DSHOW)
-            self.camera.set(cv2.CAP_PROP_FRAME_WIDTH, 1280)
-            self.camera.set(cv2.CAP_PROP_FRAME_HEIGHT, 720)
-            if self.camera.isOpened():
-                self.timer.start(30)
-                self.btn_toggle_cam.setText("Stop Camera Feed")
-                # Give every auto-capture tool a fresh chance to re-train on
-                # this camera session, in case its position shifted since
-                # last time.
-                for item in self.cam_scene.items():
-                    if hasattr(item, 'has_auto_captured'):
-                        item.has_auto_captured = False
+            self.start_camera_feed()
+
+    def on_camera_selection_changed(self):
+        """Swap which camera's tools are shown AND move the live feed.
+
+        Previously this only re-filtered tool visibility, so picking a
+        different device left the old one streaming - the selection looked
+        like it did nothing. Only restarts if a feed is actually running, so
+        choosing a camera while stopped still just arms the selection.
+        """
+        self.sync_tool_visibility_to_camera()
+        if self.timer.isActive():
+            self.stop_camera_feed()
+            if self.start_camera_feed():
+                self.logger(f"Switched live feed to camera {self.camera_index}.")
 
     def train_pattern_tool(self, tool_item):
         if self.current_raw_frame is None or not tool_item.pattern_roi: return
@@ -1409,7 +1558,11 @@ class ObservatoryEngine(QMainWindow):
                     roi = SearchROI(t["x"], t["y"], tool_name=t["name"], tool_type=t["type"])
                     roi.update_size(t["w"], t["h"])
                     roi.sensitivity = t.get("sensitivity", 50)
-                    roi.threshold = t.get("threshold", 127)
+                    # Fall back to the constructor's per-tool-type default
+                    # (see SearchROI) rather than a hardcoded 127, so a
+                    # project saved before "threshold" was stored still gets
+                    # a workable motion cutoff instead of a dead one.
+                    roi.threshold = t.get("threshold", roi.threshold)
                     roi.min_area = t.get("min_area", 100)
 
                     roi.use_thresh = t.get("use_thresh", False)

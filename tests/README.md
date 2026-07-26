@@ -49,6 +49,7 @@ exit code is meaningful (0 = pass).
 | `verify_model3d.py` | 3D load/render/pose/save (predates Ctrl-drag; its fake event lacks `modifiers()`) |
 | `verify_worker_crashfix.py` | QThread lifecycle: rapid reloads, deleted-item delivery, torn-down panels (predates the Image Capture migration; still expects `InteractiveCaptureItem.roi`, which deliberately no longer exists) |
 | `verify_canvas_items_split.py` | `canvas_items.py` split: name surface, one-way dependency, every asset type inserted + save/load round trip |
+| `verify_observatory_studio_fixes.py` | Camera switching moves the feed, motion threshold default (incl. proof the old 127 was blind to a realistic delta), capture/cutout paths + thumbnails, raw-vs-cutout picker over real IPC, Studio File→New. Also asserts the live QSettings namespace is untouched |
 | `verify_run_mode_ui.py` | Run Mode panel hiding + active-step highlight |
 | `verify_user_wait_vision_gate.py` | User Wait as an *additional* gate on top of Vision Wait |
 | `verify_blob_revert.py` | Blob tool back to original single-blob behaviour |
