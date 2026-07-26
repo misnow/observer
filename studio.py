@@ -840,8 +840,22 @@ class AuthoringInterface(QMainWindow):
         l_lay.addWidget(self.insert_tools_container)
 
         # --- AI ASSISTANT BLOCK RESTORED ---
-        self.ai_group = QGroupBox("🧠 AI Assistant")
-        ai_lay = QVBoxLayout(self.ai_group)
+        # Collapsible, and collapsed by default. The provider settings inside
+        # are configured once and then rarely touched, but this block sits at
+        # the bottom of the same column as the asset properties and was taking
+        # vertical space they needed.
+        self.ai_group = QGroupBox("🧠 AI Assistant  (click to expand)")
+        self.ai_group.setCheckable(True)
+        self.ai_group.setChecked(False)
+        ai_outer = QVBoxLayout(self.ai_group)
+        self.ai_body = QWidget()
+        ai_lay = QVBoxLayout(self.ai_body)
+        ai_lay.setContentsMargins(0, 0, 0, 0)
+        ai_outer.addWidget(self.ai_body)
+        self.ai_body.setVisible(False)
+        self.ai_group.toggled.connect(
+            lambda on: self.ai_body.setVisible(bool(on)))
+
         self.llm_settings = LLMProviderSettingsWidget(self.settings)
         ai_lay.addWidget(self.llm_settings)
 
@@ -942,8 +956,36 @@ class AuthoringInterface(QMainWindow):
 
         self.r_lay.addStretch()
         self.r_lay.addWidget(self.ai_group)
-        h_splitter.addWidget(right)
-        h_splitter.setSizes([220, 800, 350])
+
+        # The properties column SCROLLS rather than grows. Asset panels vary
+        # enormously - a 3D Model or Capture asset carries pose controls, help
+        # text, file pickers and previews - and without this the panel demanded
+        # more height than the window had and simply ran off the bottom, which
+        # is why most of a tool's properties could not be seen.
+        self.right_scroll = QScrollArea()
+        self.right_scroll.setWidget(right)
+        self.right_scroll.setWidgetResizable(True)
+        self.right_scroll.setFrameShape(QFrame.Shape.NoFrame)
+        self.right_scroll.setVerticalScrollBarPolicy(
+            Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        # Horizontal scrolling off: too-wide content must wrap, not slide out
+        # of view. With the width cap, that stops one wide widget dictating
+        # the whole column's width.
+        self.right_scroll.setHorizontalScrollBarPolicy(
+            Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.right_scroll.setMinimumWidth(300)
+        self.right_scroll.setMaximumWidth(460)
+        h_splitter.addWidget(self.right_scroll)
+
+        # The sequence tree / run preview in the middle is the working area and
+        # must never be squeezed out by the panels either side of it.
+        left.setMaximumWidth(300)
+        center.setMinimumWidth(420)
+        h_splitter.setCollapsible(1, False)
+        h_splitter.setStretchFactor(0, 0)
+        h_splitter.setStretchFactor(1, 1)
+        h_splitter.setStretchFactor(2, 0)
+        h_splitter.setSizes([220, 880, 400])
 
         self.console = QTextBrowser()
         self.console.setReadOnly(True)
@@ -1203,6 +1245,19 @@ Create an intelligent, multi-step JSON sequence that accomplishes the following 
                 if self.active_item is item:
                     QTimer.singleShot(0, self.safe_slot(self.build_asset_properties, item))
 
+    @staticmethod
+    def _hint(text):
+        """An explanatory label that wraps.
+
+        QLabel does NOT wrap by default, and an unwrapped label reports its
+        full single-line width as its *minimum* size hint. One long sentence
+        therefore sets the floor for the whole properties column, and the
+        sequence tree / canvas view is what gives way.
+        """
+        label = QLabel(text)
+        label.setWordWrap(True)
+        return label
+
     def clear_layout(self, layout):
         # Always take+deleteLater (never QFormLayout.removeRow, which deletes
         # widgets synchronously) so this is safe to call from inside a widget's
@@ -1431,7 +1486,7 @@ Create an intelligent, multi-step JSON sequence that accomplishes the following 
                 btn_browse_model.clicked.connect(self.safe_slot(browse_model))
                 self.prop_form.addRow(btn_browse_model)
 
-                self.prop_form.addRow(QLabel(
+                self.prop_form.addRow(self._hint(
                     "<hr><b>3D Pose</b><br><i>Left-drag on the model to orbit - it pivots around "
                     "the point you grab. Mouse wheel zooms.</i>"))
 
@@ -1470,7 +1525,13 @@ Create an intelligent, multi-step JSON sequence that accomplishes the following 
                 # because dragging on the canvas changes these values without
                 # going through the spinboxes.
                 lbl_pose = QLabel()
-                lbl_pose.setStyleSheet("color: #2ecc71; font-family: Consolas;")
+                # Smaller than the default: this is a fixed-width, column-
+                # aligned readout, so it cannot be word-wrapped without
+                # mangling the alignment - it has to actually FIT instead.
+                # At the default size its minimum width exceeded the whole
+                # properties column and forced it wider.
+                lbl_pose.setStyleSheet(
+                    "color: #2ecc71; font-family: Consolas; font-size: 11px;")
                 self.prop_form.addRow("Live Pose:", lbl_pose)
 
                 pose_timer = QTimer(lbl_pose)
@@ -1497,7 +1558,7 @@ Create an intelligent, multi-step JSON sequence that accomplishes the following 
                 pose_timer.start(150)
                 refresh_pose()
 
-                self.prop_form.addRow(QLabel(
+                self.prop_form.addRow(self._hint(
                     "<i>Ctrl or Shift + drag moves the whole viewport box on the canvas. "
                     "Canvas X/Y above is measured from the reference point.</i>"))
 
@@ -1541,7 +1602,7 @@ Create an intelligent, multi-step JSON sequence that accomplishes the following 
                     lambda: item.set_item_name(name_edit.text().strip() or "Capture"))
                 self.prop_form.addRow("Label:", name_edit)
 
-                self.prop_form.addRow(QLabel(
+                self.prop_form.addRow(self._hint(
                     "<i>Shows the still held by an Observatory <b>Image Capture</b> tool. "
                     "The capture itself, its ROI and its camera are configured there.</i>"))
 
@@ -1586,7 +1647,7 @@ Create an intelligent, multi-step JSON sequence that accomplishes the following 
 
                 cb_variant.currentTextChanged.connect(on_variant_changed)
                 self.prop_form.addRow("Show:", cb_variant)
-                self.prop_form.addRow(QLabel(
+                self.prop_form.addRow(self._hint(
                     "<i><b>Captured</b> is the raw still. <b>Segmented Cutout</b> is the "
                     "transparent-background version - it only appears once that tool has "
                     "actually been segmented in Observatory.</i>"))
@@ -1738,7 +1799,7 @@ Create an intelligent, multi-step JSON sequence that accomplishes the following 
                 self.prop_form.addRow("Trigger Type:", cb_type)
 
                 if item.trigger.wait_type == "Line":
-                    self.prop_form.addRow(QLabel(
+                    self.prop_form.addRow(self._hint(
                         "<i>Executes automatically as the sequence flow reaches this line. No condition needed.</i>"))
 
                 elif item.trigger.wait_type == "Vision Variable":
@@ -1876,7 +1937,7 @@ Create an intelligent, multi-step JSON sequence that accomplishes the following 
 
             elif isinstance(asset, UserWaitData):
                 self.node_prop_form.addRow(QLabel("<b>User Wait Settings</b>"))
-                self.node_prop_form.addRow(QLabel(
+                self.node_prop_form.addRow(self._hint(
                     "<i>Blocks this step until the Back/Forward buttons above the Run Mode "
                     "output panel are clicked.</i>"))
 

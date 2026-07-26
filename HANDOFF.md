@@ -235,8 +235,43 @@ Git repo initialised (3 commits). Working tree clean at `7f62b87`.
     crowding without relocating anything, so relocation stays available but
     unspent.
 
+- **Studio layout: properties column now scrolls (done).** Same treatment as
+  Observatory. Covered by `tests/verify_studio_layout.py`.
+  - Properties column in a **QScrollArea** capped at 460px, horizontal
+    scrolling off; centre pane (sequence tree / run preview) gets a 420px
+    minimum, `setCollapsible(False)` and the stretch factor.
+  - **AI Assistant is collapsible and starts collapsed** — it sat at the
+    bottom of the same column and holds set-once provider settings.
+  - Measured content heights against a 619px viewport: Text 704, Image 622,
+    Shape 716, Shape SVG 676, Capture 820, LLM 620, **3D Model 1106**, HTML
+    432. **7 of 8 overflow** — all of that used to run off the bottom and was
+    simply unreachable.
+  - All six long help labels now wrap (`_hint()`), plus the 3D **Live Pose**
+    readout, which is column-aligned so it cannot wrap — it got a smaller
+    font instead, since at the default size its minimum width alone exceeded
+    the whole column.
+
 **Known open:**
-1. **Two preserved tests are stale** (they fail identically at HEAD — not
+1. **Studio crashes with a native access violation when switching between
+   certain asset properties panels.** Found while testing the layout work;
+   **pre-existing** — reproduces at `ce09819`, before any of it.
+   - Repro: insert a 3D Model asset and another asset, then click between
+     them in the sequence tree. `tests/../scratchpad/minimal_crash.py`-style
+     two-asset probes caught `model -> capture` and `model -> html`; an
+     eight-asset tree also died on `model -> text` and on *closing* a window
+     holding an HTML or 3D Model asset.
+   - **Timing-dependent**: it vanishes under `sys.settrace`, so it is a race
+     against `deleteLater()` servicing rather than a deterministic path. The
+     3D Model panel is the common factor; the HTML item's QWebEngineView
+     aggravates it. `faulthandler` DOES catch this one ("Windows fatal
+     exception: access violation", innermost frame a `studio.py` `wrapper`,
+     i.e. inside a `safe_slot`) — unlike the `qFatal()` abort, which is
+     silent.
+   - Very likely the same family as the exit-time `0xC0000409` below.
+   - `verify_studio_layout.py` sidesteps it deliberately and says so: one
+     asset per fresh window, HTML excluded, windows never closed, and
+     `os._exit()` at the end.
+2. **Two preserved tests are stale** (they fail identically at HEAD — not
    regressions): `verify_model3d.py` predates Ctrl-drag and its fake event
    lacks `modifiers()`; `verify_worker_crashfix.py` still expects
    `InteractiveCaptureItem.roi`, deliberately removed in the Image Capture
@@ -279,6 +314,16 @@ inside a Qt-invoked slot. To find it:
 
 2. **`faulthandler` prints nothing** for this crash — it's `qFatal()`/abort,
    which bypasses Python. Its silence *confirms* the diagnosis.
+
+   **There is a second, different crash that faulthandler DOES catch**: a
+   genuine access violation (exit **139** under Git Bash, not 0xC0000409)
+   while switching between asset properties panels.
+   `faulthandler.enable(file=...)` prints "Windows fatal exception: access
+   violation" with the innermost frame in `studio.py`. So: output means this
+   one; silence means the `qFatal()` abort. It is timing-dependent and
+   disappears under `sys.settrace`, so instrument it with a **streamed,
+   per-line-flushed log**, never a tracer — and never a log written only at
+   the end, which vanishes entirely when the process dies.
 
 3. **Bypass Qt's dispatch to see the real traceback.** Calling a handler
    directly raises normally; going through `btn.click()` aborts. That
