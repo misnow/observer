@@ -211,6 +211,30 @@ Git repo initialised (3 commits). Working tree clean at `7f62b87`.
     with the token. A negation guard on the final clause catches the common
     phrasings, but it is a heuristic. `Contains` fires on any mention.
 
+- **Observatory layout: the camera view is now protected (done).** The
+  inspector had grown until it crowded out the video feed and its ROIs.
+  Covered by `tests/verify_observatory_layout.py`, which measures real pixel
+  widths rather than eyeballing.
+  - Inspector lives in a **QScrollArea** (`setWidgetResizable(True)`,
+    horizontal scrolling off) capped at 460px; the camera view has a 420px
+    hard minimum, `setCollapsible(False)`, and the stretch factor, so spare
+    width goes to the video. Measured: camera holds 772px at 1450px wide with
+    every tool selected, and still 420px in a cramped 1000px window.
+  - **Global Configuration is collapsible and starts collapsed** — it sat
+    above the tallest panel in the app (LLM Vision) and is set once.
+  - **Unwrapped `QLabel`s were a major cause.** A `QLabel` does not wrap by
+    default and reports its full single-line width as its *minimum* size hint,
+    so one long help sentence set the floor for the whole column. All help
+    texts now go through `_hint()`, which wraps.
+  - **Stale widgets were painting over new ones** — see the `clear_layout`
+    section in CLAUDE.md. This is very likely what "half the LLM tool is not
+    legible" actually was. Fixed in *both* apps.
+  - Group title had a literal `&`, which Qt ate as a mnemonic.
+  - **Not done:** moving the inspector to the bottom-left, or the global
+    config to the left panel. The scroll + protected-view approach solved the
+    crowding without relocating anything, so relocation stays available but
+    unspent.
+
 **Known open:**
 1. **Two preserved tests are stale** (they fail identically at HEAD — not
    regressions): `verify_model3d.py` predates Ctrl-drag and its fake event

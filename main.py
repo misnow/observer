@@ -487,6 +487,20 @@ class ObservatoryEngine(QMainWindow):
         except Exception as e:
             self.logger(f"Could not open folder: {e}")
 
+    @staticmethod
+    def _hint(text):
+        """An explanatory label that wraps.
+
+        QLabel does NOT wrap by default, and an unwrapped label reports its
+        full single-line width as its *minimum* size hint. One long sentence
+        therefore sets the floor for the entire inspector column, and the
+        camera view is what pays for it. Every help text in this panel goes
+        through here.
+        """
+        label = QLabel(text)
+        label.setWordWrap(True)
+        return label
+
     def _refresh_activation_label(self, tool_item):
         """Show how the last reply scored, guarded like every panel touch."""
         try:
@@ -637,8 +651,20 @@ class ObservatoryEngine(QMainWindow):
         self.right_layout = QVBoxLayout(right_panel)
 
         # --- GLOBAL SETTINGS (LLM PROVIDER) ---
-        self.global_group = QGroupBox("Global Configuration")
-        global_lay = QFormLayout(self.global_group)
+        # Collapsible, and collapsed by default. Provider/key/timeout are set
+        # once and then rarely touched, but they sit above every LLM tool's own
+        # settings - on the tool that already has the tallest panel in the app.
+        self.global_group = QGroupBox("Global Configuration  (click to expand)")
+        self.global_group.setCheckable(True)
+        self.global_group.setChecked(False)
+        global_outer = QVBoxLayout(self.global_group)
+        self.global_body = QWidget()
+        global_lay = QFormLayout(self.global_body)
+        global_outer.addWidget(self.global_body)
+        self.global_body.setVisible(False)
+        self.global_group.toggled.connect(
+            lambda on: self.global_body.setVisible(bool(on)))
+
         self.llm_settings = LLMProviderSettingsWidget(self.settings)
         global_lay.addRow(self.llm_settings)
 
@@ -657,7 +683,10 @@ class ObservatoryEngine(QMainWindow):
         self.filter_layout = QFormLayout(self.filter_group)
         self.right_layout.addWidget(self.filter_group)
 
-        self.tool_prop_group = QGroupBox("Tool Settings & Output")
+        # No ampersand: Qt reads "&" in a title as a keyboard mnemonic, eats it,
+        # and underlines the next character - the title rendered as
+        # "Tool Settings  Output" with a stray gap.
+        self.tool_prop_group = QGroupBox("Tool Settings / Output")
         self.tool_prop_layout = QFormLayout(self.tool_prop_group)
         self.right_layout.addWidget(self.tool_prop_group)
 
@@ -669,8 +698,40 @@ class ObservatoryEngine(QMainWindow):
         self.right_layout.addWidget(self.score_group)
 
         self.right_layout.addStretch()
-        h_splitter.addWidget(right_panel)
-        h_splitter.setSizes([250, 800, 350])
+
+        # The inspector SCROLLS rather than grows. Tool panels vary enormously
+        # in height - an LLM Vision tool carries a prompt box, a response box,
+        # activation settings and the provider config - and without this the
+        # panel simply demanded more room than the window had, and the camera
+        # view was what gave way.
+        self.right_scroll = QScrollArea()
+        self.right_scroll.setWidget(right_panel)
+        self.right_scroll.setWidgetResizable(True)
+        self.right_scroll.setFrameShape(QFrame.Shape.NoFrame)
+        self.right_scroll.setVerticalScrollBarPolicy(
+            Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        # Horizontal scrolling is deliberately OFF: content that is too wide
+        # should wrap, not slide sideways out of view. Combined with the width
+        # cap this is what stops one wide widget dictating the column width.
+        self.right_scroll.setHorizontalScrollBarPolicy(
+            Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.right_scroll.setMinimumWidth(300)
+        self.right_scroll.setMaximumWidth(460)
+        h_splitter.addWidget(self.right_scroll)
+
+        # The video feed is the pane that must never be squeezed out - it is
+        # the whole point of the window, and you cannot place or judge an ROI
+        # you cannot see. A hard minimum plus setCollapsible(False) means no
+        # amount of properties-panel content can encroach on it, and the
+        # stretch factors send any spare width here rather than to the panels.
+        left_panel.setMaximumWidth(320)
+        self.cam_view.setMinimumWidth(420)
+        self.cam_view.setMinimumHeight(320)
+        h_splitter.setCollapsible(1, False)
+        h_splitter.setStretchFactor(0, 0)
+        h_splitter.setStretchFactor(1, 1)
+        h_splitter.setStretchFactor(2, 0)
+        h_splitter.setSizes([250, 900, 400])
         main_layout.addWidget(h_splitter)
 
         self.current_thumb_label = None
@@ -682,13 +743,27 @@ class ObservatoryEngine(QMainWindow):
         self.filter_group.setVisible(False)
         self.score_group.setVisible(False)
         self.global_group.setVisible(False)
-        self.tool_prop_layout.addRow(QLabel("<i>Select a tool to view properties.</i>"))
+        self.tool_prop_layout.addRow(self._hint("<i>Select a tool to view properties.</i>"))
 
     def clear_layout(self, layout):
+        # takeAt() only removes a widget from LAYOUT MANAGEMENT - it stays
+        # parented and keeps painting at its old geometry until deleteLater()
+        # is actually serviced on the next event-loop pass. Rebuilding this
+        # panel therefore drew the outgoing widgets on top of the incoming
+        # ones, which is why a freshly selected tool could show two labels
+        # overlapping and half-illegible.
+        #
+        # hide() + setParent(None) removes it from the paint tree at once;
+        # deleteLater() still does the actual destruction, because deleting
+        # synchronously here would be unsafe when this is called from inside a
+        # widget's own signal handler.
         while layout.count():
             item = layout.takeAt(0)
             if item.widget():
-                item.widget().deleteLater()
+                widget = item.widget()
+                widget.hide()
+                widget.setParent(None)
+                widget.deleteLater()
             elif item.layout():
                 self.clear_layout(item.layout())
         self.current_thumb_label = None
@@ -844,7 +919,7 @@ class ObservatoryEngine(QMainWindow):
 
             slider_thresh.valueChanged.connect(_on_thresh_changed)
             self.tool_prop_layout.addRow("Pixel Diff Thresh:", row_thresh)
-            self.tool_prop_layout.addRow(QLabel(
+            self.tool_prop_layout.addRow(self._hint(
                 "<i>How far a pixel must change to count as motion (1-255). "
                 "Lower = more sensitive. Real inter-frame deltas are usually "
                 "10-40, so values much above ~60 will rarely trigger.</i>"))
@@ -893,7 +968,7 @@ class ObservatoryEngine(QMainWindow):
                 lambda t, i=tool_item: setattr(i, 'activation_token', t.strip()))
             self.tool_prop_layout.addRow("Token:", txt_token)
 
-            self.tool_prop_layout.addRow(QLabel(
+            self.tool_prop_layout.addRow(self._hint(
                 "<i>Seeing the token drives this tool's score to 100 (otherwise "
                 "0), which sets its state for a Studio <b>Vision Wait</b>.<br><br>"
                 "Most reliable — <b>Exact reply</b> with a prompt that allows "
@@ -929,7 +1004,7 @@ class ObservatoryEngine(QMainWindow):
             cb_mode.currentTextChanged.connect(
                 lambda v, i=tool_item: self.update_tool_val(i, 'capture_mode', v))
             self.tool_prop_layout.addRow("Capture Mode:", cb_mode)
-            self.tool_prop_layout.addRow(QLabel(
+            self.tool_prop_layout.addRow(self._hint(
                 "<i>ROI captures just the box; Full Frame captures the whole camera image. "
                 "Drag/resize the box on the feed to set the region.</i>"))
 
@@ -968,7 +1043,7 @@ class ObservatoryEngine(QMainWindow):
             self.segment_target_input.setPlaceholderText(
                 "e.g. the bracket  (Gemini only; blank = main foreground object)")
             self.tool_prop_layout.addRow("Subject:", self.segment_target_input)
-            self.tool_prop_layout.addRow(QLabel(
+            self.tool_prop_layout.addRow(self._hint(
                 "<i>grabcut runs locally. <b>gemini uploads this capture to Google</b> "
                 "and uses your AI Studio API key.</i>"))
 
@@ -1021,7 +1096,7 @@ class ObservatoryEngine(QMainWindow):
             self.blob_coord_label.setStyleSheet("color: #2ecc71; font-weight: bold;")
             self.tool_prop_layout.addRow("From Origin (px):", self.blob_coord_label)
 
-            self.tool_prop_layout.addRow(QLabel("<i>To move origin, drag the green crosshair inside the ROI.</i>"))
+            self.tool_prop_layout.addRow(self._hint("<i>To move origin, drag the green crosshair inside the ROI.</i>"))
 
     def trigger_llm_tool(self, tool_item):
         if tool_item.llm_is_processing:

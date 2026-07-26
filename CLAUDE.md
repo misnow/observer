@@ -61,6 +61,27 @@ crucially **accepts no signal arguments** — which is what defuses cause #1.
 
 ---
 
+## Rebuilding a properties panel
+
+`clear_layout()` must **hide + reparent** each widget, not just `deleteLater()`
+it:
+
+```python
+widget.hide(); widget.setParent(None); widget.deleteLater()
+```
+
+`takeAt()` only removes a widget from *layout management*. It stays parented
+and keeps painting at its old geometry until `deleteLater()` is serviced on the
+next event-loop pass, so a rebuilt panel drew the outgoing widgets **on top of**
+the incoming ones — text overlapping text, half-illegible. Keep
+`deleteLater()` for the actual destruction: deleting synchronously here is
+unsafe when the call comes from inside a widget's own signal handler.
+
+Both apps had this. `tests/verify_observatory_layout.py` guards it by asserting
+the panel's child count doesn't grow across repeated rebuilds.
+
+---
+
 ## Hard-won facts
 
 - **Runtime is Python 3.12** (`C:\Users\mikes\AppData\Local\Programs\Python\Python312\python.exe`).

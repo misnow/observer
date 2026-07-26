@@ -1208,10 +1208,18 @@ Create an intelligent, multi-step JSON sequence that accomplishes the following 
         # widgets synchronously) so this is safe to call from inside a widget's
         # own signal handler, such as rebuilding this panel right after a
         # Browse button's own click finishes.
+        # takeAt() only removes a widget from LAYOUT MANAGEMENT - it stays
+        # parented and keeps painting at its old geometry until deleteLater()
+        # is serviced, so a rebuilt panel drew the outgoing widgets over the
+        # incoming ones. hide() + setParent(None) takes it out of the paint
+        # tree immediately; deleteLater() still does the destruction.
         while layout.count():
             item = layout.takeAt(0)
             if item.widget():
-                item.widget().deleteLater()
+                widget = item.widget()
+                widget.hide()
+                widget.setParent(None)
+                widget.deleteLater()
             elif item.layout():
                 self.clear_layout(item.layout())
                 item.layout().deleteLater()
