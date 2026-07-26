@@ -15,6 +15,8 @@ Supporting modules (deliberately standalone, keep them that way):
 | File | Purpose |
 |---|---|
 | `canvas_items.py` | Canvas assets: Text/Media/Shape/3D/Capture/HTML/LLM items, `AnimatableMixin`, `MediaResizeHandle`, `TriggerSettings` |
+| `doc_extract.py` | PDF text/image scraping + OCR (PyMuPDF, pluggable OCR backends) |
+| `pdf_import.py` | The PDF import dialog; hands Studio a list of assets to insert |
 | `vision_tools.py` | `SearchROI`, `PerspectivePlaneROI`, handles, image b64 helpers |
 | `ui_components.py` | `DARK_THEME`, `LLMWorker`, `LLMProviderSettingsWidget` |
 | `model3d.py` | 3D load (.stl/.step/…) + software renderer (numpy + QPainter) |
@@ -67,6 +69,9 @@ crucially **accepts no signal arguments** — which is what defuses cause #1.
   3.12 path explicitly.
 - **No usable GPU** (Intel UHD 620). Anything GPU-hungry is impractical:
   local vision LLMs take 10–40s, and 3D is software-rendered for this reason.
+  OCR is CPU-only too: **~2.4s per A4 page at 200dpi**, which is why
+  `doc_extract` only OCRs pages that have no text layer — a 500-page scan is
+  a 20-minute job, so it runs on a worker thread and warns before starting.
 - **IPC files must be written atomically** (temp + `os.replace`). Plain
   `open(...,"w")` truncates first; the other process polls every 50–500ms and
   will read the empty window.

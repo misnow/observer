@@ -38,6 +38,11 @@ exit code is meaningful (0 = pass).
 - Assert on **quality**, not just absence of exceptions: IoU against a known
   mask, STEP re-imported and volume-checked. Three real bugs passed
   "it didn't crash" while producing garbage.
+- When a result is *inherently* lossy, assert a **measured floor** rather than
+  equality — and log the actual value so a regression stays visible. OCR is
+  the example: it scores 0.947 on the fixture and reads "ORDER" as "0RDER".
+  The test asserts accuracy ≥ 0.90 *and* separately requires the digits to be
+  exact, instead of loosening the check until it goes green.
 
 ## What each covers
 
@@ -50,6 +55,8 @@ exit code is meaningful (0 = pass).
 | `verify_worker_crashfix.py` | QThread lifecycle: rapid reloads, deleted-item delivery, torn-down panels (predates the Image Capture migration; still expects `InteractiveCaptureItem.roi`, which deliberately no longer exists) |
 | `verify_canvas_items_split.py` | `canvas_items.py` split: name surface, one-way dependency, every asset type inserted + save/load round trip |
 | `verify_observatory_studio_fixes.py` | Camera switching moves the feed, motion threshold default (incl. proof the old 127 was blind to a realistic delta), capture/cutout paths + thumbnails, raw-vs-cutout picker over real IPC, Studio File→New. Also asserts the live QSettings namespace is untouched |
+| `verify_doc_extract.py` | PDF scraping: probe, text layer vs OCR, OCR against ground truth, image extraction + logo de-duplication, manifest round trip, inline vs folder mode, cancellation, loud errors |
+| `verify_pdf_import_ui.py` | The import dialog on a real worker (probe summary, pick list, selections) and Studio's `import_pdf()` inserting real assets. Asserts **measured OCR accuracy ≥ 0.90** rather than exact equality — see below |
 | `verify_run_mode_ui.py` | Run Mode panel hiding + active-step highlight |
 | `verify_user_wait_vision_gate.py` | User Wait as an *additional* gate on top of Vision Wait |
 | `verify_blob_revert.py` | Blob tool back to original single-blob behaviour |

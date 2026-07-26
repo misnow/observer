@@ -33,7 +33,8 @@ package isn't installed." **Always invoke the 3.12 path explicitly.**
 
 Installed in 3.12: `PyQt6 6.11.0`, `PyQt6-WebEngine 6.11.0`, `opencv`,
 `numpy 2.4.6`, `trimesh 4.12.2`, `cadquery 2.8.0` (bundles OpenCASCADE),
-`fast_simplification 0.1.13`, `mediapipe 0.10.35`.
+`fast_simplification 0.1.13`, `mediapipe 0.10.35`, `google-genai 1.36.0`,
+`pymupdf 1.28.0`, `rapidocr-onnxruntime 1.4.4` (+ `onnxruntime 1.28.0`).
 
 Run either app:
 ```
@@ -110,6 +111,29 @@ Git repo initialised (3 commits). Working tree clean at `7f62b87`.
      project file.
   5. *Studio File→New* — `new_file()` already existed but was only reachable
      internally. Added a confirmed `new_project()` wrapper to the File menu.
+
+- **PDF/OCR subsystem (done).** `doc_extract.py` (engine) + `pdf_import.py`
+  (dialog), reachable from Studio's "📄 Import from PDF" button. Covered by
+  `tests/verify_doc_extract.py` and `tests/verify_pdf_import_ui.py`.
+  - **New dependencies**, installed into the 3.12 runtime:
+    `pymupdf 1.28.0`, `rapidocr-onnxruntime 1.4.4` (pulls `onnxruntime`,
+    `shapely`, `pyclipper`, `tqdm`). No torch, no GPU, no system binary.
+  - Text layer is read directly; only pages *without* one get OCR'd
+    (`ocr="auto"`). **OCR costs ~2.4s/page on this CPU**, so a 500-page scan
+    is ~20 minutes — it runs on a worker thread, reports progress, can be
+    cancelled, and the dialog states the estimate before you commit.
+  - Small docs (≤25 pages) come back in memory *and* on disk; larger ones
+    write files only and are read on demand via `manifest.json`, so a huge
+    scan never materialises entirely in RAM.
+  - Repeated images (a header logo on every page) are de-duplicated by xref —
+    written once, referenced many times. Without this a 500-page document
+    would emit 500 identical PNGs.
+  - **OCR is lossy**: measured 0.947 against ground truth, turning "ORDER"
+    into "0RDER" while reading all digits correctly. Treat OCR'd text as
+    needing review.
+  - The **Gemini OCR backend is written but NOT verified end to end** — it
+    needs a real API key to exercise. The rapidocr path is fully verified.
+    Note a Google AI Pro subscription does *not* grant API access.
 
 **Known open:**
 1. **Two preserved tests are stale** (they fail identically at HEAD — not

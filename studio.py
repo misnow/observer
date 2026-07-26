@@ -826,13 +826,16 @@ class AuthoringInterface(QMainWindow):
         btn_user_wait = QPushButton("👆 Insert User Wait")
         btn_user_wait.clicked.connect(self.insert_user_wait)
         btn_user_wait.setStyleSheet("background-color: #16a085; font-weight: bold;")
+        btn_pdf = QPushButton("📄 Import from PDF")
+        btn_pdf.clicked.connect(self.safe_slot(self.import_pdf))
+        btn_pdf.setStyleSheet("background-color: #9b59b6; font-weight: bold;")
 
         # Grouped into one container so it can be hidden as a unit in Run
         # Mode, where inserting/editing sequence items doesn't make sense.
         self.insert_tools_container = QWidget()
         insert_lay = QVBoxLayout(self.insert_tools_container)
         insert_lay.setContentsMargins(0, 0, 0, 0)
-        for b in [btn_step, btn_txt, btn_img, btn_vid, btn_shape, btn_html, btn_model3d, btn_capture, btn_llm, btn_clear, btn_timer, btn_obs, btn_wait, btn_flow, btn_user_wait]:
+        for b in [btn_step, btn_txt, btn_img, btn_vid, btn_shape, btn_html, btn_model3d, btn_capture, btn_llm, btn_pdf, btn_clear, btn_timer, btn_obs, btn_wait, btn_flow, btn_user_wait]:
             insert_lay.addWidget(b)
         l_lay.addWidget(self.insert_tools_container)
 
@@ -2396,6 +2399,53 @@ Create an intelligent, multi-step JSON sequence that accomplishes the following 
         filepath = self.prompt_open_file("Insert Custom SVG", "SVG Files (*.svg)", start_dir=shape_lib_dir)
         if filepath:
             self.insert_asset(InteractiveShapeItem("Custom SVG", filepath), "◆ Shape [Custom SVG]")
+
+    def import_pdf(self):
+        """Scrape a PDF and place the chosen text/images on the canvas.
+
+        The dialog does the extracting and the choosing; this only turns what
+        comes back into assets, so the PDF machinery stays out of studio.py.
+        Imported lazily - a Studio session that never touches a PDF shouldn't
+        pay for loading PyMuPDF and the OCR runtime.
+        """
+        try:
+            import pdf_import
+        except ImportError as e:
+            self.log_message(
+                f"<span style='color:red;'>PDF import unavailable: {e}. "
+                f"Install with: pip install pymupdf rapidocr-onnxruntime</span>")
+            return
+
+        dialog = pdf_import.PdfImportDialog(self, start_dir=os.getcwd())
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return
+
+        assets = dialog.selected_assets()
+        if not assets:
+            self.log_message("PDF import: nothing selected.")
+            return
+
+        added_text = added_images = 0
+        for kind, payload in assets:
+            if kind == "text":
+                item = InteractiveTextItem(payload)
+                # Page text is far longer than the 48pt default is meant for,
+                # and a wall of unwrapped text runs straight off the canvas.
+                item.setFont(QFont("Arial", 18))
+                item.current_font_size = 18
+                item.setTextWidth(900)
+                self.insert_asset(item, "📄 PDF Text")
+                added_text += 1
+            elif kind == "image" and os.path.exists(payload):
+                self.insert_asset(InteractiveMediaItem(payload, "Image"),
+                                  f"🖼️ PDF Image [{os.path.basename(payload)}]")
+                added_images += 1
+
+        info = dialog.result_info() or {}
+        self.log_message(
+            f"PDF import: added {added_text} text and {added_images} image asset(s)"
+            + (f" from {os.path.basename(info.get('source', ''))}" if info else "")
+            + (f". Files kept in {info.get('out_dir')}" if info.get("out_dir") else "."))
 
     def insert_html_dialog(self):
         # Matches every other "Insert X" button (Shape, Text, ...): appears
