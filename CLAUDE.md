@@ -142,9 +142,13 @@ assertions in `tests/verify_gemini_segmenter.py`:
 - **Models don't echo tokens literally.** Asked to "reply with only
   `$ACTIVE`", gemini-2.5-flash replied `ACTIVE` — correct, but the `$` was
   gone, and a literal string match scored the right answer as a miss. Match
-  the alphanumeric core with word boundaries. Related: a 429 from the free
-  tier is usually a *per-minute* limit that clears in about a minute, not a
-  dead key — check before concluding anything.
+  the alphanumeric core with word boundaries.
+- **Gemini free-tier 429s come in two flavours** and they look identical.
+  A *per-minute* limit clears in about a minute; the *daily* cap does not.
+  Both observed on 2026-07-25 — the first cleared on retry, and later the same
+  day two 65s waits still returned 429, which is the daily cap, not a defect
+  and not a dead key. Distinguish by retrying once: if it survives a couple of
+  minutes, stop testing against the live API until tomorrow.
 
 ---
 

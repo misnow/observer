@@ -88,8 +88,10 @@ for name, image, expected in (("person present", person, True),
     w("")
     w(f"  --- {name} (expect {'ACTIVATION' if expected else 'no activation'}) ---")
     # The free tier rate-limits bursts, and this script makes two calls back
-    # to back. A 429 here is a per-minute limit that clears in about a minute,
-    # not a dead key - so retry rather than report a false failure.
+    # to back. A 429 has two causes that read identically: a per-minute limit,
+    # which clears in about a minute, and the daily cap, which does not.
+    # Retrying separates them - if it survives two waits it is the daily cap,
+    # which is not a defect and not a dead key.
     response = ""
     for attempt in range(3):
         worker = LLMWorker({"provider": "Gemini", "api_key": api_key},
@@ -122,7 +124,11 @@ for name, image, expected in (("person present", person, True),
     w(f"      replied in {time.time() - t0:.1f}s: {response_shown.strip()[:120]!r}")
 
     if response.strip().lower().startswith(("api error", "connection error", "error:")):
-        w("      call failed - cannot judge activation")
+        if "429" in response:
+            w("      still rate limited after two waits - this is the DAILY free-tier")
+            w("      cap, not a defect and not a bad key. Re-run tomorrow.")
+        else:
+            w("      call failed - cannot judge activation")
         results.append((name, expected, None, False))
         continue
 

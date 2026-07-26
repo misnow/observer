@@ -194,8 +194,16 @@ Git repo initialised (3 commits). Working tree clean at `7f62b87`.
        as markup). Matching is therefore done on the token's *alphanumeric
        core* with word boundaries, so `$ACTIVE` matches `ACTIVE` but still
        not `proactive`.
-    2. The free tier rate-limits bursts. A 429 is a per-minute limit that
-       clears in about a minute — not a dead key.
+    2. The free tier rate-limits bursts, and a 429 has **two causes that look
+       identical**: a per-minute limit that clears in about a minute, and the
+       daily cap that does not. Both were hit on 2026-07-25. Retry once; if it
+       survives a couple of minutes it is the daily cap — not a defect and not
+       a dead key.
+  - **Live status:** both directions confirmed, in separate runs (the daily
+    cap intervened before one run could cover both). Person image → the model
+    replied `ACTIVE` → activates. Empty image → replied `NONE` → does not
+    activate. Re-run `verify_llm_activation_live.py` on a fresh quota day to
+    see both in a single pass.
   - **Mode matters.** `Exact reply` is recommended: the whole reply must be
     the token, prompted as *"reply with only $ACTIVE if yes, or only NONE if
     no"*. `Ends with` fits the natural phrasing but cannot fully separate a
