@@ -251,6 +251,27 @@ Git repo initialised (3 commits). Working tree clean at `7f62b87`.
     font instead, since at the default size its minimum width alone exceeded
     the whole column.
 
+- **LGS Web API client (`lg_api.py`, done — but paths need confirming).**
+  Talks to **Light Guide Systems**, the separate commercial product that
+  shares this project's name. Covered by `tests/verify_lg_api.py` (offline,
+  40 checks) and `tests/verify_lg_api_live.py` (run on the LGS box).
+  - **Port 54274**, from the wiki: *"Port favored for Light Guide Web API
+    (spells LG API on phones)"*. Not 54321. **54448 is LGS's general TCP/IP
+    port and does not serve the Web API** — a likely source of confusion.
+  - The LGS machine is a **different PC**, so host/port are configurable and
+    persist via QSettings (`lg_api_*` keys).
+  - **Only `/Programs/Run` is a verified path** (read off a live Postman
+    session). The other 13 are inferred from request names and are flagged
+    `verified=False`. `LGClient.load_collection()` imports the LGS Postman
+    JSON — which the wiki tells you to download — and overrides the guesses.
+    **Do that before trusting any inferred path.**
+  - `run_program` / `shutdown` / `restart` require `confirm=True`; they act on
+    equipment in front of an operator. `discover()` is GET-only.
+  - **Not yet done:** the reverse direction (LGS driving this app). LGS's Web
+    API is for controlling LGS; making it call *us* needs either an HTTP
+    listener on our side or LGS-side outbound docs I do not have. Also not
+    wired into any UI yet — this is the client library only.
+
 **Known open:**
 1. **Studio crashes with a native access violation when switching between
    certain asset properties panels.** Found while testing the layout work;

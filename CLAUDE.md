@@ -22,6 +22,7 @@ Supporting modules (deliberately standalone, keep them that way):
 | `model3d.py` | 3D load (.stl/.step/…) + software renderer (numpy + QPainter) |
 | `segmenter.py` | Object segmentation, pluggable backends (grabcut / SAM) |
 | `mesh_to_step.py` | Faceted STEP (ISO-10303-21) export from a triangle mesh |
+| `lg_api.py` | Client for the **external** Light Guide Systems Web API (port 54274) |
 
 ---
 
@@ -124,6 +125,30 @@ unavoidable, use **pure insertion against a unique anchor**, or explicit
 content replacement with an assert on match count.
 
 **Commit before substantial changes**, not just after.
+
+---
+
+## The *other* LightGuide
+
+`lg_api.py` talks to **Light Guide Systems (LGS)**, a separate commercial
+product that happens to share this project's name. In that module "LG" always
+means the external product.
+
+- **Port 54274**, per the LGS wiki: *"Port favored for Light Guide Web API
+  (spells LG API on phones)"*. **54448 is a different thing** — LGS's general
+  TCP/IP port — and does not serve the Web API.
+- The LGS box is normally **another PC on the line**, so the host is
+  configurable; never assume localhost.
+- Replies come wrapped: `{"Verb", "Endpoint", "ReturnType", "ResponseItem"}`.
+- **Only `/Programs/Run` is a verified path.** Everything else in
+  `ENDPOINTS` is inferred from request *names* and carries `verified=False`.
+  The authoritative source is the Postman collection the wiki tells you to
+  download — `LGClient.load_collection()` reads it and overrides the guesses.
+  The offline test demonstrates why: a plausible-looking
+  `/Window/Focus/Canvas` guess loses to a real `/Application/Window/FocusCanvas`.
+- `run_program`, `shutdown` and `restart` drive industrial equipment in front
+  of an operator, so they require `confirm=True`. `discover()` is GET-only for
+  the same reason — probing with POST would start work instructions.
 
 ---
 
