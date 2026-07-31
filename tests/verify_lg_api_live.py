@@ -30,6 +30,19 @@ print(f"=== LGS Web API probe: {client.config.base_url} ===\n")
 
 if not client.ping():
     print(f"  Nothing is listening on {host}:{port}.")
+    # The port is per-install (the Web API settings file declares it), so try
+    # the other known candidates before sending anyone hunting.
+    others = [p for p in (54321, 54274, 54448, 8080, 80) if p != port]
+    alive = []
+    for p in others:
+        probe = lg_api.LGClient(lg_api.LGConfig(host=host, port=p, timeout=2))
+        if probe.ping():
+            alive.append(p)
+    if alive:
+        print(f"\n  BUT something IS listening on {host}: {alive}")
+        print(f"  Re-run with that port, e.g.:")
+        print(f"     python tests\\verify_lg_api_live.py {host} {alive[0]}")
+        sys.exit(1)
     print()
     print("  Checks, in order:")
     print("   1. Is the LGS application running, with its Web API service enabled?")

@@ -9,13 +9,20 @@ means the *external* product, never this app.
     this app  ---- HTTP ---->  LGS Web API   (run programs, query the DB,
                                               switch modes, drive the window)
 
-Port 54274 by default, straight from the LGS wiki:
+Port 54274 by DEFAULT, from the LGS wiki:
 
     54274 - Port favored for Light Guide Web API (spells LG API on phones)
     54448 - Port favored by Light Guide for general TCP/IP communications
 
-It is 54274 that serves the Web API. The host is configurable because the LGS
-machine is usually a *different* PC on the line, not localhost.
+That is only the favoured default, not a fixed value. The wiki also says the
+Web API service has its own settings file "used to declare where you want the
+self-hosting API to live" - so each install can move it, and a given station
+may well be on something else entirely.
+
+    >>> This project's target LGS machine is reported to use 54321. <<<
+
+Always set host and port explicitly for a real station rather than relying on
+the default; the LGS box is usually a *different* PC on the line anyway.
 
 WHAT IS VERIFIED AND WHAT IS NOT
 --------------------------------

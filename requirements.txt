@@ -1,0 +1,41 @@
+# LightGuide runtime dependencies.
+#
+# Install with the 3.12 interpreter EXPLICITLY - a bare `python` on PATH is
+# 3.13 here with a different site-packages, and installing into the wrong one
+# is a silent failure that looks like "the package isn't installed":
+#
+#   C:\Users\mikes\AppData\Local\Programs\Python\Python312\python.exe -m pip install -r requirements.txt
+#
+# Versions are pinned to what this project is actually verified against.
+
+# --- core UI (both apps) ---
+PyQt6==6.11.0
+PyQt6-WebEngine==6.11.0          # InteractiveHTMLItem only; large, but the
+                                 # HTML asset will not import without it
+
+# --- vision / imaging ---
+opencv-python==4.10.0.84
+numpy==2.4.6
+
+# --- PDF scraping + OCR (doc_extract.py, pdf_import.py) ---
+pymupdf==1.28.0
+rapidocr-onnxruntime==1.4.4      # pulls onnxruntime, shapely, pyclipper, tqdm
+                                 # CPU-only, ~2.4s per A4 page here
+
+# --- 3D (model3d.py, mesh_to_step.py) ---
+trimesh==4.12.2
+cadquery==2.8.0                  # bundles OpenCASCADE; only needed for STEP
+                                 # import/export - big, drop it if unused
+
+# --- optional -------------------------------------------------------------
+# Gemini backends (LLM vision, segmentation, optional OCR). Without it those
+# backends report themselves unavailable rather than failing obscurely.
+google-genai==1.36.0
+
+# Human Rigging (Pose) tool in Observatory. main.py guards this with
+# MP_AVAILABLE, so the app runs fine without it - the tool just won't appear.
+mediapipe==0.10.35
+
+# NOT required and deliberately absent: segment-anything / sam2 / sam3.
+# segmenter.py detects them and reports a clear message if missing; the
+# grabcut and gemini backends cover the actual use.

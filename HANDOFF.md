@@ -44,6 +44,50 @@ C:\Users\mikes\AppData\Local\Programs\Python\Python312\python.exe main.py
 
 ---
 
+## 2b. Getting this onto another machine
+
+⚠️ **This repo has NO git remote. Nothing is backed up anywhere.** All 13
+commits live only in `C:\Users\mikes\PycharmProjects\lightproject\.git` on the
+authoring PC. Losing that drive loses the history, and you cannot `git pull`
+on another machine until a remote exists.
+
+To fix that (private remote — the repo carries no secrets, verified: keys live
+in the registry, and `captures/`, `vision_state.json`, `studio_command.json`
+are gitignored):
+
+```
+gh repo create lightguide --private --source=. --remote=origin --push
+```
+
+or against any existing host:
+
+```
+git remote add origin <url>
+git push -u origin master
+```
+
+Then on the LGS-side machine:
+
+```
+git clone <url> lightproject
+cd lightproject
+<python312>\python.exe -m pip install -r requirements.txt
+<python312>\python.exe studio.py
+```
+
+**Do not build an .exe for this.** Freezing (PyInstaller) exists to reach
+machines *without* Python; both of yours have it. A PyQt6 + QtWebEngine +
+onnxruntime bundle is 500MB-plus, QtWebEngine is notoriously awkward to
+freeze, and you would repeat that build every revision. `git pull` is seconds
+and changes nothing about how the app runs. Only revisit this if the app has
+to run somewhere you cannot install Python.
+
+`requirements.txt` pins the verified versions. `cadquery` (STEP import/export)
+and `mediapipe` (the Pose tool) are the big optional ones — both can be
+dropped if that machine doesn't need them.
+
+---
+
 ## 3. Credentials — where they live, deliberately not written down
 
 **No secrets are stored in this repo, and none belong here.**
