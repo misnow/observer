@@ -110,6 +110,15 @@ class FakeCanvas:
     def __init__(self):
         self.calls = []
         self._geo = None
+        self.frameless = None
+        self.fitted = 0
+
+    def setWindowFlag(self, flag, on):
+        self.frameless = bool(on)
+        self.calls.append(("setWindowFlag", bool(on)))
+
+    def fit_scene(self):
+        self.fitted += 1
 
     def showNormal(self):
         self.calls.append("showNormal")
@@ -145,6 +154,10 @@ check("the fallback explains itself and says the setting is kept",
       results[1].reason)
 check("canvas 1 fell back to a WINDOW, not fullscreen",
       "showFullScreen" not in canvases[1].calls, str(canvases[1].calls))
+check("a fullscreen projection is BORDERLESS - no title bar stealing pixels",
+      canvases[0].frameless is True, str(canvases[0].frameless))
+check("and the scene is re-fitted to the screen it landed on",
+      canvases[0].fitted >= 1, str(canvases[0].fitted))
 
 check(">>> the saved config is UNCHANGED after a fallback <<<", before == after,
       "a fallback must never persist itself")

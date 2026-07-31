@@ -205,6 +205,16 @@ class SearchROI(QGraphicsRectItem):
         # Speck removal before contours. Camera noise otherwise produces
         # dozens of tiny contours that swamp the real subject.
         self.blob_denoise = 5
+        # Low-contrast handling. Otsu picks a level from the histogram, which
+        # is right when subject and background are well separated but sits too
+        # far toward the bright side when they are not. The bias shifts that
+        # chosen level: NEGATIVE accepts dimmer blobs, positive demands
+        # brighter ones. This is the "how dark a blob counts" control.
+        self.blob_level_bias = 0
+        # CLAHE before thresholding, for scenes where subject and background
+        # are genuinely close in brightness. Off by default: it also amplifies
+        # noise, so it is a deliberate trade rather than a free win.
+        self.blob_contrast_boost = False
         self.last_blob_x, self.last_blob_y, self.last_blob_a = 0, 0, 0.0
 
         # LLM Properties

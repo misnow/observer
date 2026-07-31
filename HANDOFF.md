@@ -317,6 +317,24 @@ Git repo initialised (3 commits). Working tree clean at `7f62b87`.
     wired into any UI yet — this is the client library only.
 
 **Known open:**
+0. **"Human Rigging (Pose)" is a STUB.** `MP_AVAILABLE` adds it to the
+   Observatory tool dropdown and `self.pose_tracker` is constructed, but
+   grep finds **no per-frame processing for it anywhere** — the tool can be
+   placed and does nothing. This is the answer to "what happened to the
+   skeleton rigging": it was started and never wired up. Deciding what it
+   should *do* (publish joint coordinates over IPC like blob geometry? feed
+   the human-identifier pattern lookup?) is the open question.
+0b. **Not yet built, requested 2026-07-26:**
+   - A **human identifier** tied into the blob tool — effectively a saved
+     pattern library with lookup, able to return coordinates. Large; needs a
+     design decision on whether it extends Pattern Match, uses the pose
+     tracker, or is a new matcher.
+   - **Undo.** Nothing exists today. Would need a command/undo-stack layer
+     over the asset and sequence edits; a genuine architectural addition
+     rather than a feature bolt-on.
+   - The **calibration wizard** (orchestrating project→capture→solve live).
+     The maths, patterns, detection and quality gate are all built and
+     proven; only the cross-app sequencing is missing.
 1. **Studio crashes with a native access violation when switching between
    certain asset properties panels.** Found while testing the layout work;
    **pre-existing** — reproduces at `ce09819`, before any of it.

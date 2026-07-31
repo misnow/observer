@@ -236,9 +236,17 @@ def _show_on_screen(canvas, screen, fullscreen=True):
             handle.setScreen(screen)
             canvas.setGeometry(screen.geometry())
         if fullscreen:
+            # Borderless and filling the screen: a projector must show the
+            # canvas and nothing else - no title bar, no frame, no chrome
+            # stealing pixels from the projection area.
+            canvas.setWindowFlag(Qt.WindowType.FramelessWindowHint, True)
             canvas.showFullScreen()
         else:
+            canvas.setWindowFlag(Qt.WindowType.FramelessWindowHint, False)
             canvas.show()
+        fit = getattr(canvas, "fit_scene", None)
+        if callable(fit):
+            fit()
     except RuntimeError:
         pass
 

@@ -1210,6 +1210,21 @@ class InteractiveLLMTextItem(QGraphicsRectItem):
         # previous loop iteration) comes back, with a failsafe timeout so a
         # dead/misconfigured tool can't hang the sequence forever.
         self.hold_for_response = False
+        # $ACTIVE gating. When armed, the step holds until the model answers
+        # with the activation token, re-asking every recapture_seconds so a
+        # scene that is not yet ready gets looked at again rather than judged
+        # once. The failsafe stops a dead or misconfigured tool holding the
+        # sequence for ever, and is optional because some stations genuinely
+        # want to wait indefinitely for a human to appear.
+        self.activation_enabled = False
+        self.activation_token = "$ACTIVE"
+        self.activation_mode = "Exact reply"
+        self.recapture_seconds = 10.0
+        self.failsafe_enabled = True
+        self.failsafe_seconds = 60.0
+        self.last_recapture_time = 0.0
+        # -1 = no canvas: the tool acts purely as a gate, with nothing drawn.
+        self.output_canvas = 0
         self.response_pending = False
         self.trigger_sent_time = 0
         self.failsafe_triggered = False

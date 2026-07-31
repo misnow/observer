@@ -145,7 +145,44 @@ class ProjectorCanvas(QMainWindow):
         self.scene.setSceneRect(0, 0, 1920, 1080)
         self.view = QGraphicsView(self.scene)
         self.view.setStyleSheet("border: none; background-color: black;")
+
+        # A projection surface is not a document viewer. Scrollbars, panning
+        # and any drag-to-scroll are removed: on a projector, scrolling the
+        # view silently shifts every graphic away from the physical thing it
+        # was aligned to, and there is no way to tell by looking at the
+        # screen that it has happened. The scene is what the projector shows,
+        # nothing more.
+        self.view.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.view.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.view.setDragMode(QGraphicsView.DragMode.NoDrag)
+        self.view.setInteractive(False)
+        self.view.setFrameShape(QFrame.Shape.NoFrame)
+        # Anchor on the scene rather than the mouse, so a stray wheel event
+        # cannot re-centre the projection either.
+        self.view.setTransformationAnchor(QGraphicsView.ViewportAnchor.NoAnchor)
+        self.view.setResizeAnchor(QGraphicsView.ViewportAnchor.NoAnchor)
+        self.view.setAlignment(Qt.AlignmentFlag.AlignCenter)
+
         self.setCentralWidget(self.view)
+        self.fit_scene()
+
+    def fit_scene(self):
+        """Map the whole 1920x1080 scene onto the window, keeping aspect.
+
+        Without this the view sits at 1:1 and a screen smaller than the scene
+        shows only the top-left corner of the authored layout.
+        """
+        try:
+            self.view.setSceneRect(self.scene.sceneRect())
+            self.view.fitInView(self.scene.sceneRect(),
+                                Qt.AspectRatioMode.KeepAspectRatio)
+        except RuntimeError:
+            pass
+
+    def resizeEvent(self, event):
+        # Re-fit when the window moves to a projector of a different size.
+        super().resizeEvent(event)
+        self.fit_scene()
 
     def clear_canvas(self):
         self.scene.clear()
@@ -485,6 +522,12 @@ class AuthoringInterface(QMainWindow):
                          "font_size": asset.current_font_size, "text_color": asset.text_color.name(),
                          "width": asset.rect().width(), "height": asset.rect().height(),
                          "hold_for_response": asset.hold_for_response,
+                         "activation_enabled": getattr(asset, "activation_enabled", False),
+                         "activation_token": getattr(asset, "activation_token", "$ACTIVE"),
+                         "activation_mode": getattr(asset, "activation_mode", "Exact reply"),
+                         "recapture_seconds": getattr(asset, "recapture_seconds", 10.0),
+                         "failsafe_enabled": getattr(asset, "failsafe_enabled", True),
+                         "failsafe_seconds": getattr(asset, "failsafe_seconds", 60.0),
                          "rotation": asset.rotation(), "trigger": vars(asset.trigger)})
                 elif isinstance(asset, FlowControlData):
                     step_block["children"].append(
@@ -531,6 +574,10 @@ class AuthoringInterface(QMainWindow):
         """Place a just-loaded asset on the output canvas it was saved to,
         falling back to canvas 0 if that canvas no longer exists."""
         idx = int(child_data.get('output_canvas', 0))
+        if idx < 0:
+            # Saved with no output canvas - it runs but draws nothing.
+            new_item.output_canvas = -1
+            return
         idx = max(0, min(len(self.canvases) - 1, idx))
         new_item.output_canvas = idx
         self.canvases[idx].scene.addItem(new_item)
@@ -721,6 +768,12 @@ class AuthoringInterface(QMainWindow):
                         new_item.set_text_color(QColor(child_data.get('text_color', "#00ff99")))
                         new_item.update_size(child_data.get('width', 420), child_data.get('height', 220))
                         new_item.hold_for_response = child_data.get('hold_for_response', False)
+                        new_item.activation_enabled = child_data.get('activation_enabled', False)
+                        new_item.activation_token = child_data.get('activation_token', "$ACTIVE")
+                        new_item.activation_mode = child_data.get('activation_mode', "Exact reply")
+                        new_item.recapture_seconds = float(child_data.get('recapture_seconds', 10.0))
+                        new_item.failsafe_enabled = child_data.get('failsafe_enabled', True)
+                        new_item.failsafe_seconds = float(child_data.get('failsafe_seconds', 60.0))
                         new_item.trigger.__dict__.update(child_data.get('trigger', {}))
                         new_item.setPos(*child_data.get('pos', [200.0, 200.0]))
                         new_item.setRotation(child_data.get('rotation', 0))
@@ -1933,6 +1986,76 @@ Create an intelligent, multi-step JSON sequence that accomplishes the following 
                 prompt_edit.textChanged.connect(lambda: setattr(item, 'prompt', prompt_edit.toPlainText()))
                 self.prop_form.addRow("LLM Prompt:", prompt_edit)
 
+                # --- $ACTIVE gating ---------------------------------------
+                self.prop_form.addRow(QLabel("<hr><b>$ACTIVE Activation</b>"))
+
+                chk_act = QCheckBox("Hold this step until the token is seen")
+                chk_act.setChecked(bool(getattr(item, 'activation_enabled', False)))
+                chk_act.toggled.connect(
+                    lambda on, i=item: (setattr(i, 'activation_enabled', bool(on)),
+                                        QTimer.singleShot(0, self.safe_slot(
+                                            self.build_asset_properties, i))))
+                self.prop_form.addRow("Activation:", chk_act)
+
+                if getattr(item, 'activation_enabled', False):
+                    tok = QLineEdit(getattr(item, 'activation_token', "$ACTIVE"))
+                    tok.textChanged.connect(
+                        lambda t, i=item: setattr(i, 'activation_token', t.strip()))
+                    self.prop_form.addRow("Token:", tok)
+
+                    cb_mode = QComboBox()
+                    for label, data in (("Exact reply is the token (most reliable)",
+                                         "Exact reply"),
+                                        ("Ends with token", "Ends with"),
+                                        ("Contains token anywhere", "Contains")):
+                        cb_mode.addItem(label, data)
+                    idx = cb_mode.findData(getattr(item, 'activation_mode', "Exact reply"))
+                    cb_mode.setCurrentIndex(max(0, idx))
+                    cb_mode.currentIndexChanged.connect(
+                        lambda _i, i=item, c=cb_mode: setattr(i, 'activation_mode',
+                                                              c.currentData()))
+                    self.prop_form.addRow("Matching:", cb_mode)
+
+                    spin_recap = QDoubleSpinBox()
+                    spin_recap.setRange(1.0, 3600.0)
+                    spin_recap.setSuffix(" sec")
+                    spin_recap.setValue(float(getattr(item, 'recapture_seconds', 10.0)))
+                    spin_recap.valueChanged.connect(
+                        lambda v, i=item: setattr(i, 'recapture_seconds', float(v)))
+                    self.prop_form.addRow("Image recapture time:", spin_recap)
+
+                    chk_fail = QCheckBox("Give up after a failsafe timeout")
+                    chk_fail.setChecked(bool(getattr(item, 'failsafe_enabled', True)))
+                    chk_fail.toggled.connect(
+                        lambda on, i=item: setattr(i, 'failsafe_enabled', bool(on)))
+                    self.prop_form.addRow("Failsafe:", chk_fail)
+
+                    spin_fail = QDoubleSpinBox()
+                    spin_fail.setRange(5.0, 86400.0)
+                    spin_fail.setSuffix(" sec")
+                    spin_fail.setValue(float(getattr(item, 'failsafe_seconds', 60.0)))
+                    spin_fail.valueChanged.connect(
+                        lambda v, i=item: setattr(i, 'failsafe_seconds', float(v)))
+                    self.prop_form.addRow("Failsafe timeout:", spin_fail)
+
+                    # Same guidance as the Observatory panel - the failure mode
+                    # is identical here and is not obvious.
+                    self.prop_form.addRow(self._hint(
+                        "<i>The step holds, re-asking every recapture interval, "
+                        "until the reply matches. Seeing the token releases it.<br><br>"
+                        "Most reliable — <b>Exact reply</b> with a prompt that "
+                        "permits nothing else:<br>"
+                        "&nbsp;&nbsp;<tt>Is there a person in this room? Reply with "
+                        "only $ACTIVE if yes, or only NONE if no.</tt><br><br>"
+                        "<b>Ends with</b> suits the natural phrasing but cannot "
+                        "fully separate a refusal: <i>\"no person, so I will not "
+                        "output $ACTIVE.\"</i> genuinely ends with the token. A "
+                        "negation guard catches the common phrasings; Exact reply "
+                        "has nothing to guard against. <b>Contains</b> fires on any "
+                        "mention.<br><br>"
+                        "Note the model may drop the <tt>$</tt> — matching uses the "
+                        "token's alphanumeric core, so <tt>ACTIVE</tt> still counts.</i>"))
+
                 spin_font = QSpinBox()
                 spin_font.setRange(8, 60)
                 spin_font.setValue(item.current_font_size)
@@ -1946,7 +2069,7 @@ Create an intelligent, multi-step JSON sequence that accomplishes the following 
                 chk_hold.setChecked(item.hold_for_response)
                 chk_hold.toggled.connect(lambda v: setattr(item, 'hold_for_response', v))
                 self.prop_form.addRow("Hold for Response:", chk_hold)
-                self.build_output_canvas_selector(item)
+                self.build_output_canvas_selector(item, allow_none=True)
 
                 spin_w = QSpinBox()
                 spin_w.setRange(220, 1600)
@@ -3147,7 +3270,18 @@ Create an intelligent, multi-step JSON sequence that accomplishes the following 
 
     def assign_asset_to_canvas(self, item, canvas_index):
         try:
-            canvas_index = max(0, min(len(self.canvases) - 1, int(canvas_index)))
+            canvas_index = int(canvas_index)
+            if canvas_index < 0:
+                # "None": off every canvas entirely. The asset still exists in
+                # the sequence and still runs - an LLM Call can gate on
+                # $ACTIVE - it simply draws nothing.
+                if item.scene() is not None:
+                    item.scene().removeItem(item)
+                item.output_canvas = -1
+                self.log_message("Asset set to no output canvas - it will run "
+                                 "but display nothing.")
+                return
+            canvas_index = max(0, min(len(self.canvases) - 1, canvas_index))
             if getattr(item, 'output_canvas', 0) == canvas_index and item.scene() is self.canvases[canvas_index].scene:
                 return
             was_visible = item.isVisible()
@@ -3159,12 +3293,26 @@ Create an intelligent, multi-step JSON sequence that accomplishes the following 
         except Exception as e:
             self.log_message(f"<span style='color:red;'>Could not move asset to canvas {canvas_index + 1}: {e}</span>")
 
-    def build_output_canvas_selector(self, item):
+    def build_output_canvas_selector(self, item, allow_none=False):
+        """Canvas picker. `allow_none` adds a "None" entry (-1).
+
+        With None the asset is removed from every canvas and draws nothing,
+        which is what lets an LLM Call act purely as a $ACTIVE gate - waiting
+        on a condition without putting text in front of the operator.
+        """
         cb = QComboBox()
+        if allow_none:
+            cb.addItem("None - do not display", -1)
         for i in range(len(self.canvases)):
             cb.addItem(f"Canvas {i + 1}", i)
-        cb.setCurrentIndex(min(getattr(item, 'output_canvas', 0), len(self.canvases) - 1))
-        cb.currentIndexChanged.connect(lambda idx: self.assign_asset_to_canvas(item, idx))
+
+        current = int(getattr(item, 'output_canvas', 0))
+        pos = cb.findData(current if current >= 0 else -1)
+        if pos < 0:
+            pos = cb.findData(min(max(0, current), len(self.canvases) - 1))
+        cb.setCurrentIndex(max(0, pos))
+        cb.currentIndexChanged.connect(
+            lambda _idx, c=cb, i=item: self.assign_asset_to_canvas(i, c.currentData()))
         self.prop_form.addRow("Output Canvas:", cb)
 
     def get_active_step_parent(self):

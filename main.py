@@ -14,7 +14,7 @@ import cv2
 import numpy as np
 from PyQt6.QtWidgets import *
 from PyQt6.QtCore import QTimer, Qt, QSettings
-from PyQt6.QtGui import QImage, QPixmap, QAction
+from PyQt6.QtGui import QImage, QPixmap, QAction, QIcon, QColor
 
 # Import local modules
 from vision_tools import (img_to_b64, b64_to_img, PerspectivePlaneROI, SearchROI,
@@ -637,6 +637,11 @@ class ObservatoryEngine(QMainWindow):
         self.active_tools_list = QListWidget()
         self.active_tools_list.itemChanged.connect(self.handle_tool_rename)
         self.active_tools_list.itemSelectionChanged.connect(self.sync_list_to_scene)
+        # itemSelectionChanged only fires when the selection CHANGES. With one
+        # tool left - the usual state after deleting the others - it is
+        # already selected, so clicking it emitted nothing and the properties
+        # never rebuilt. itemClicked fires on every click regardless.
+        self.active_tools_list.itemClicked.connect(self.select_tool_from_list)
         left_layout.addWidget(self.active_tools_list)
 
         self.btn_delete_tool = QPushButton("🗑️ Delete Selected Tool")
@@ -1131,11 +1136,72 @@ class ObservatoryEngine(QMainWindow):
                 slider_motion.valueChanged.connect(
                     lambda v, i=tool_item: self.update_tool_val(i, 'blob_motion_thresh', v))
                 self.tool_prop_layout.addRow("Motion Sensitivity:", slider_motion)
+
+                # Without these a Blob tool had NO way to obtain a reference
+                # frame - the capture button and the auto-capture option only
+                # existed on Motion Detection tools - so Motion mode could
+                # never do anything.
+                btn_blob_ref = QPushButton("📷 Capture Reference State")
+                btn_blob_ref.setStyleSheet("background-color: #c0392b; font-weight: bold;")
+                btn_blob_ref.clicked.connect(
+                    lambda _=False, i=tool_item: self.set_motion_reference(i))
+                self.tool_prop_layout.addRow(btn_blob_ref)
+
+                chk_blob_auto = QCheckBox("Auto-capture on camera start")
+                chk_blob_auto.setChecked(bool(tool_item.auto_capture_reference))
+                chk_blob_auto.toggled.connect(
+                    lambda v, i=tool_item: setattr(i, 'auto_capture_reference', bool(v)))
+                self.tool_prop_layout.addRow(chk_blob_auto)
+
+                ref_ready = tool_item.reference_frame is not None
+                lbl_ref = QLabel("Reference trained" if ref_ready
+                                 else "⚠ No reference frame - Motion mode cannot "
+                                      "detect anything until you capture one")
+                lbl_ref.setWordWrap(True)
+                lbl_ref.setStyleSheet("color: #2ecc71;" if ref_ready else "color: #e74c3c;")
+                self.tool_prop_layout.addRow("Status:", lbl_ref)
+
                 self.tool_prop_layout.addRow(self._hint(
                     "<i>Finds blobs in what CHANGED against the trained reference "
-                    "frame, so a busy but static background subtracts away. Train "
+                    "frame, so a busy but static background subtracts away. Capture "
                     "a reference with the scene empty, then the part that appears "
                     "is the blob. Lower = more sensitive.</i>"))
+
+            if mode != "Motion":
+                slider_bias = QSlider(Qt.Orientation.Horizontal)
+                slider_bias.setRange(-80, 80)
+                slider_bias.setValue(int(getattr(tool_item, 'blob_level_bias', 0)))
+                lbl_bias = QLabel(str(slider_bias.value()))
+                lbl_bias.setFixedWidth(34)
+                row_bias = QWidget()
+                lay_bias = QHBoxLayout(row_bias)
+                lay_bias.setContentsMargins(0, 0, 0, 0)
+                lay_bias.addWidget(slider_bias)
+                lay_bias.addWidget(lbl_bias)
+
+                def _on_bias(v, i=tool_item, lb=lbl_bias):
+                    self.update_tool_val(i, 'blob_level_bias', v)
+                    try:
+                        lb.setText(str(v))
+                    except RuntimeError:
+                        pass
+
+                slider_bias.valueChanged.connect(_on_bias)
+                self.tool_prop_layout.addRow("Darkness Bias:", row_bias)
+                self.tool_prop_layout.addRow(self._hint(
+                    "<i>Shifts the automatic level. <b>Negative accepts dimmer, "
+                    "lower-contrast blobs</b>; positive demands brighter ones. "
+                    "Use this when a part is only slightly different from its "
+                    "background.</i>"))
+
+                chk_boost = QCheckBox("Contrast boost (CLAHE)")
+                chk_boost.setChecked(bool(getattr(tool_item, 'blob_contrast_boost', False)))
+                chk_boost.setToolTip("Stretches local contrast before thresholding. "
+                                     "Helps when subject and background are close in "
+                                     "brightness, but also amplifies noise.")
+                chk_boost.toggled.connect(
+                    lambda v, i=tool_item: self.update_tool_val(i, 'blob_contrast_boost', bool(v)))
+                self.tool_prop_layout.addRow("Low contrast:", chk_boost)
 
             slider_denoise = QSlider(Qt.Orientation.Horizontal)
             slider_denoise.setRange(1, 21)
@@ -1365,7 +1431,8 @@ class ObservatoryEngine(QMainWindow):
             # Motion/Delete tool with it enabled, instead of requiring a
             # manual button press every time the camera gets bumped.
             for item in self.cam_scene.items():
-                if (getattr(item, 'tool_type', None) in ("Motion Detection", "Delete (Missing Object)")
+                if (getattr(item, 'tool_type', None) in ("Motion Detection", "Delete (Missing Object)",
+                                                         "Blob Detection")
                         and self.tool_belongs_to_current_camera(item)
                         and getattr(item, 'auto_capture_reference', False)
                         and not getattr(item, 'has_auto_captured', False)):
@@ -1478,8 +1545,21 @@ class ObservatoryEngine(QMainWindow):
                         # Otsu picks the level from this ROI's own histogram
                         # every frame, so it tracks the lighting instead of
                         # assuming a fixed 127 that only suited one scene.
-                        _, thresh = cv2.threshold(work_img, 0, 255,
-                                                  cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+                        if getattr(item, 'blob_contrast_boost', False):
+                            work_img = cv2.createCLAHE(
+                                clipLimit=2.5, tileGridSize=(8, 8)).apply(work_img)
+                        chosen, thresh = cv2.threshold(
+                            work_img, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+                        bias = int(getattr(item, 'blob_level_bias', 0))
+                        if bias:
+                            # Otsu sits midway between the two peaks. On a
+                            # low-contrast scene that is too high, and the
+                            # subject is thresholded away; a negative bias
+                            # lets dimmer blobs through.
+                            level = max(1, min(254, int(chosen) + bias))
+                            _, thresh = cv2.threshold(work_img, level, 255,
+                                                      cv2.THRESH_BINARY)
+                        item.last_blob_level = int(chosen) + bias
 
                     if thresh is None:
                         valid_blobs = []
@@ -1586,6 +1666,8 @@ class ObservatoryEngine(QMainWindow):
                             "time": time.time()}
 
                 if item == active_item: self.score_bar.set_score(item.current_score)
+
+            self.refresh_tool_list_indicators()
 
             rgb_image = cv2.cvtColor(display_frame, cv2.COLOR_BGR2RGB)
             h, w, ch = rgb_image.shape
@@ -1737,6 +1819,62 @@ class ObservatoryEngine(QMainWindow):
             self.cam_scene.blockSignals(False)
             self.load_tool_properties_to_ui(roi)
 
+    def select_tool_from_list(self, list_item):
+        """Load a tool's properties from a click on the list.
+
+        Deliberately independent of whether the selection changed - see the
+        connect() note. Safe to call repeatedly.
+        """
+        if list_item is None:
+            return
+        roi = list_item.data(Qt.ItemDataRole.UserRole)
+        if roi is None:
+            return
+        try:
+            self.cam_scene.blockSignals(True)
+            self.cam_scene.clearSelection()
+            roi.setSelected(True)
+            self.cam_scene.blockSignals(False)
+            self.load_tool_properties_to_ui(roi)
+            self.refresh_tool_list_indicators()
+        except RuntimeError:
+            pass
+
+    def refresh_tool_list_indicators(self):
+        """Colour each row by trigger state, and mark the active tool.
+
+        Without this the only way to know whether a tool is firing was to
+        select it and watch its score bar - impossible for more than one tool
+        at a time.
+        """
+        try:
+            selected = self.cam_scene.selectedItems()
+            active = selected[0] if selected else None
+            for i in range(self.active_tools_list.count()):
+                row = self.active_tools_list.item(i)
+                roi = row.data(Qt.ItemDataRole.UserRole)
+                if roi is None:
+                    continue
+                triggered = bool(self.tool_states.get(getattr(roi, 'tool_name', ''), False))
+                belongs = self.tool_belongs_to_current_camera(roi)
+
+                pix = QPixmap(14, 14)
+                if not belongs:
+                    pix.fill(QColor("#3a3a3a"))          # another camera
+                elif triggered:
+                    pix.fill(QColor("#2ecc71"))          # firing
+                else:
+                    pix.fill(QColor("#5a5a5a"))          # idle
+                row.setIcon(QIcon(pix))
+
+                font = row.font()
+                font.setBold(roi is active)
+                row.setFont(font)
+                row.setForeground(QColor("#f1c40f") if roi is active
+                                  else QColor("#a9b7c6"))
+        except RuntimeError:
+            pass
+
     def handle_tool_rename(self, item):
         roi = item.data(Qt.ItemDataRole.UserRole)
         if roi:
@@ -1757,7 +1895,15 @@ class ObservatoryEngine(QMainWindow):
             if roi.tool_name in self.tool_states: del self.tool_states[roi.tool_name]
             if roi.tool_name in self.tool_responses: del self.tool_responses[roi.tool_name]
             if roi.tool_name in self.tool_response_times: del self.tool_response_times[roi.tool_name]
+            if roi.tool_name in self.tool_geometry: del self.tool_geometry[roi.tool_name]
             self.active_tools_list.takeItem(self.active_tools_list.row(curr_item))
+            # Clear both selections explicitly. Qt auto-selects a neighbouring
+            # row after takeItem, which left the remaining tool "selected" with
+            # an empty panel - and then clicking it changed nothing, so no
+            # signal fired and it could never be inspected again.
+            self.active_tools_list.clearSelection()
+            self.active_tools_list.setCurrentItem(None)
+            self.cam_scene.clearSelection()
             self.build_empty_properties()
 
     def _pause_engine_timers(self):
@@ -1845,6 +1991,8 @@ class ObservatoryEngine(QMainWindow):
                         "blob_manual_thresh": getattr(item, "blob_manual_thresh", 127),
                         "blob_motion_thresh": getattr(item, "blob_motion_thresh", 25),
                         "blob_denoise": getattr(item, "blob_denoise", 5),
+                        "blob_level_bias": getattr(item, "blob_level_bias", 0),
+                        "blob_contrast_boost": getattr(item, "blob_contrast_boost", False),
                         "auto_capture_reference": item.auto_capture_reference,
                         "capture_mode": getattr(item, "capture_mode", "ROI"),
                         "captured_path": getattr(item, "captured_path", ""),
@@ -1947,6 +2095,8 @@ class ObservatoryEngine(QMainWindow):
                     roi.blob_manual_thresh = t.get("blob_manual_thresh", roi.blob_manual_thresh)
                     roi.blob_motion_thresh = t.get("blob_motion_thresh", roi.blob_motion_thresh)
                     roi.blob_denoise = t.get("blob_denoise", roi.blob_denoise)
+                    roi.blob_level_bias = t.get("blob_level_bias", roi.blob_level_bias)
+                    roi.blob_contrast_boost = t.get("blob_contrast_boost", roi.blob_contrast_boost)
                     roi.auto_capture_reference = t.get("auto_capture_reference", False)
 
                     # Fall back to the constructor defaults so projects saved

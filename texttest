@@ -1,0 +1,45 @@
+[
+    {
+        "type": "StepBlock",
+        "children": [
+            {
+                "type": "InteractiveTextItem",
+                "pos": [
+                    200.0,
+                    200.0
+                ],
+                "text": "test",
+                "font_size": 48,
+                "text_color": "#ffffff",
+                "scale_factor": 1.0,
+                "scale_x": 1.0,
+                "scale_y": 1.0,
+                "lock_aspect_ratio": true,
+                "is_blinking": false,
+                "curve_radius": 0,
+                "output_canvas": 0,
+                "animation_type": "None",
+                "animation_direction": "Left",
+                "animation_duration": 1.0,
+                "rotation": 0.0,
+                "trigger": {
+                    "wait_type": "Line",
+                    "observatory_file": "",
+                    "vision_target": "None",
+                    "condition": "Is True"
+                }
+            },
+            {
+                "type": "TimerData",
+                "duration": 5.0,
+                "show_on_canvas": false,
+                "output_canvas": 0
+            },
+            {
+                "type": "FlowControlData",
+                "action": "End Program",
+                "target_step": 1
+            }
+        ]
+    }
+]
