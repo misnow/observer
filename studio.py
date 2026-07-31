@@ -767,10 +767,18 @@ class AuthoringInterface(QMainWindow):
         self.cb_canvas_count.currentTextChanged.connect(
             lambda v: self.safe_slot(self.set_canvas_count, int(v))())
 
+        # Sits right beside the canvas count, because "how many canvases" and
+        # "which screen does each one fill" are the same decision.
+        self.btn_canvas_setup = QPushButton("🖥 Canvas Setup")
+        self.btn_canvas_setup.setToolTip(
+            "Assign each output canvas to a projector or monitor, and remember it.")
+        self.btn_canvas_setup.clicked.connect(self.safe_slot(self.open_canvas_setup))
+
         toolbar.addWidget(self.btn_design_mode)
         toolbar.addWidget(self.btn_run_mode)
         toolbar.addWidget(self.lbl_canvas_count)
         toolbar.addWidget(self.cb_canvas_count)
+        toolbar.addWidget(self.btn_canvas_setup)
         toolbar.addWidget(self.btn_restart)
         toolbar.addWidget(self.btn_play)
         toolbar.addWidget(self.btn_stop)
@@ -837,7 +845,20 @@ class AuthoringInterface(QMainWindow):
         insert_lay.setContentsMargins(0, 0, 0, 0)
         for b in [btn_step, btn_txt, btn_img, btn_vid, btn_shape, btn_html, btn_model3d, btn_capture, btn_llm, btn_pdf, btn_clear, btn_timer, btn_obs, btn_wait, btn_flow, btn_user_wait]:
             insert_lay.addWidget(b)
-        l_lay.addWidget(self.insert_tools_container)
+        insert_lay.addStretch()
+
+        # The insert list keeps growing (16 buttons and counting), so it
+        # scrolls rather than pushing the rest of the left column - and the
+        # sequence tree - off the bottom of the window.
+        self.insert_scroll = QScrollArea()
+        self.insert_scroll.setWidget(self.insert_tools_container)
+        self.insert_scroll.setWidgetResizable(True)
+        self.insert_scroll.setFrameShape(QFrame.Shape.NoFrame)
+        self.insert_scroll.setHorizontalScrollBarPolicy(
+            Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.insert_scroll.setVerticalScrollBarPolicy(
+            Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        l_lay.addWidget(self.insert_scroll, 1)
 
         # --- AI ASSISTANT BLOCK RESTORED ---
         # Collapsible, and collapsed by default. The provider settings inside
@@ -996,6 +1017,14 @@ class AuthoringInterface(QMainWindow):
 
         self.studio_override_view = StudioCanvasView(self.studio_scene, self)
         self.canvas.setCentralWidget(self.studio_override_view)
+
+        # Put the output canvases on their remembered screens. Deferred to the
+        # event loop because a window has no windowHandle() until it has been
+        # shown, and the handle is what makes it land on the right monitor.
+        import canvas_display
+        self.display_config = canvas_display.DisplayConfig.load(self.settings)
+        QTimer.singleShot(0, self.safe_slot(self.apply_display_config))
+
         self.new_file()
 
     def trigger_ai(self):
@@ -2406,6 +2435,43 @@ Create an intelligent, multi-step JSON sequence that accomplishes the following 
 
         self.engine_prev_vision_states = self.vision_tool_states.copy()
 
+    def open_canvas_setup(self):
+        """Assign output canvases to screens, then apply and remember."""
+        import canvas_display
+
+        dialog = canvas_display.CanvasSetupDialog(
+            len(self.canvases), self.display_config, self)
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return
+
+        # Everything the dialog returns is a deliberate user choice, so this
+        # is the one place a stored assignment is allowed to be overwritten.
+        self.display_config = dialog.result_config()
+        self.display_config.save(self.settings)
+        self.apply_display_config()
+
+    def apply_display_config(self, announce=True):
+        """Put each canvas on its assigned screen.
+
+        A canvas whose screen is missing falls back to a window WITHOUT
+        touching the saved assignment - see canvas_display for why that
+        matters. Returns the per-canvas results.
+        """
+        import canvas_display
+
+        if not hasattr(self, "display_config"):
+            self.display_config = canvas_display.DisplayConfig.load(self.settings)
+        results = self.display_config.apply(self.canvases)
+        if announce:
+            for res in results:
+                if res.applied:
+                    self.log_message(f"Canvas {res.canvas_index + 1} -> {res.screen_label}")
+                elif "no screen assigned" not in res.reason:
+                    self.log_message(
+                        f"<span style='color:orange;'>Canvas {res.canvas_index + 1}: "
+                        f"{res.reason}</span>")
+        return results
+
     def new_project(self):
         """File -> New. Confirms first, because this discards unsaved work.
 
@@ -2665,6 +2731,9 @@ Create an intelligent, multi-step JSON sequence that accomplishes the following 
                     new_canvas.show()
                     self.canvases.append(new_canvas)
                 self.log_message(f"Output canvases: {count}.")
+                # A newly added canvas may already have a remembered screen
+                # from a previous session - honour it immediately.
+                QTimer.singleShot(0, self.safe_slot(self.apply_display_config))
             else:
                 # Reassign any assets living on a canvas that's going away
                 # back to canvas 0, so they're never orphaned into a scene
