@@ -50,6 +50,10 @@ class ObservatoryEngine(QMainWindow):
         self.current_raw_frame = None
 
         self.tool_states = {}
+        # Per-tool geometry published to Studio (blob centroid in camera
+        # pixels, angle, area). Studio maps these through the projector
+        # calibration to place graphics onto what the camera found.
+        self.tool_geometry = {}
         self.tool_responses = {}
         self.tool_response_times = {}
         # Still frames grabbed on Studio's request, keyed by the requesting
@@ -197,7 +201,8 @@ class ObservatoryEngine(QMainWindow):
             with open(tmp, "w") as f:
                 json.dump({"states": self.tool_states, "responses": self.tool_responses,
                            "response_times": self.tool_response_times,
-                           "captures": self.captures}, f)
+                           "captures": self.captures,
+                           "geometry": self.tool_geometry}, f)
             os.replace(tmp, "vision_state.json")
         except Exception:
             pass  # transient FS contention; the next tick rewrites anyway
@@ -1416,6 +1421,21 @@ class ObservatoryEngine(QMainWindow):
                             item.last_blob_a = rect[2]
                             gx, gy = x1 + cx, y1 + cy
 
+                            # Publish the centroid in FULL CAMERA FRAME
+                            # coordinates. last_blob_x/y are relative to the
+                            # user's origin handle, which is right for the
+                            # on-screen readout but useless to Studio: the
+                            # projector<->camera homography is solved in camera
+                            # pixels, so that is what has to cross the IPC.
+                            self.tool_geometry[item.tool_name] = {
+                                "type": "Blob Detection", "found": True,
+                                "camera_x": int(gx), "camera_y": int(gy),
+                                "angle": float(rect[2]),
+                                "area": float(cv2.contourArea(best_c)),
+                                "rel_x": int(item.last_blob_x),
+                                "rel_y": int(item.last_blob_y),
+                                "time": time.time()}
+
                             cv2.drawMarker(display_frame, (gx, gy), (0, 255, 0), cv2.MARKER_CROSS, 20, 2)
                             box = cv2.boxPoints(rect);
                             box = np.int32(box) + np.array([x1, y1])
@@ -1426,6 +1446,13 @@ class ObservatoryEngine(QMainWindow):
                                     f"X: {item.last_blob_x} px | Y: {item.last_blob_y} px\nAngle: {item.last_blob_a:.1f}°")
                     else:
                         self.tool_states[item.tool_name] = False
+                        # Say so explicitly rather than leaving a stale
+                        # position behind - a follower that keeps drawing on
+                        # the last known spot after the part has gone is
+                        # worse than one that stops.
+                        self.tool_geometry[item.tool_name] = {
+                            "type": "Blob Detection", "found": False,
+                            "time": time.time()}
 
                 if item == active_item: self.score_bar.set_score(item.current_score)
 

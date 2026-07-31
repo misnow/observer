@@ -18,7 +18,7 @@ from canvas_items import (TriggerSettings, AnimatableMixin, InteractiveTextItem,
                           MediaResizeHandle, InteractiveMediaItem, InteractiveShapeItem,
                           Interactive3DModelItem, InteractiveCaptureItem,
                           InteractiveHTMLItem, InteractiveLLMTextItem,
-                          InteractiveTimerItem)
+                          InteractiveTimerItem, InteractiveBlobFollowItem)
 
 # ---------------------------------------------------------
 # 1. DATA STRUCTURES & SEQUENCE NODES
@@ -219,6 +219,11 @@ class AuthoringInterface(QMainWindow):
         self.vision_tool_responses = {}
         self.vision_tool_response_times = {}
         self.vision_captures = {}
+        # Blob centroids in CAMERA pixels, published by Observatory.
+        self.vision_geometry = {}
+        # Projector<->camera mapping. None until a calibration is loaded or
+        # run; without it a follower cannot know where a blob is on canvas.
+        self.calibration = None
         self.engine_prev_vision_states = {"None": True}
         self.last_stall_log = 0
 
@@ -440,6 +445,21 @@ class AuthoringInterface(QMainWindow):
                          "animation_duration": asset.animation_duration,
                          "output_canvas": getattr(asset, "output_canvas", 0),
                          "rotation": asset.rotation(), "trigger": vars(asset.trigger)})
+                elif isinstance(asset, InteractiveBlobFollowItem):
+                    step_block["children"].append(
+                        {"type": "InteractiveBlobFollowItem",
+                         "pos": [asset.pos().x(), asset.pos().y()],
+                         "message": asset.message,
+                         "observatory_file": asset.observatory_file,
+                         "source_tool": asset.source_tool,
+                         "anchor": asset.anchor, "offset_px": asset.offset_px,
+                         "font_size": asset.current_font_size,
+                         "text_color": asset.text_color.name(),
+                         "show_marker": asset.show_marker,
+                         "show_background": asset.show_background,
+                         "output_canvas": asset.output_canvas,
+                         "is_blinking": asset.is_blinking,
+                         "trigger": asset.trigger.__dict__})
                 elif isinstance(asset, InteractiveCaptureItem):
                     step_block["children"].append(
                         {"type": "InteractiveCaptureItem", "pos": [asset.pos().x(), asset.pos().y()],
@@ -653,6 +673,25 @@ class AuthoringInterface(QMainWindow):
                         ti = QTreeWidgetItem(top_item, ["", "🧊 3D Model", "Active in Step", ""])
                         ti.setData(1, Qt.ItemDataRole.UserRole, new_item)
 
+                    elif ctype == "InteractiveBlobFollowItem":
+                        new_item = InteractiveBlobFollowItem(
+                            child_data.get("message", "Insert here"),
+                            child_data.get("observatory_file", ""),
+                            child_data.get("source_tool", "None"))
+                        new_item.trigger.__dict__.update(child_data.get("trigger", {}))
+                        new_item.anchor = child_data.get("anchor", "Above")
+                        new_item.offset_px = int(child_data.get("offset_px", 90))
+                        new_item.current_font_size = int(child_data.get("font_size", 32))
+                        new_item.text_color = QColor(child_data.get("text_color", "#00ff99"))
+                        new_item.show_marker = bool(child_data.get("show_marker", True))
+                        new_item.set_show_background(child_data.get("show_background", False))
+                        new_item.is_blinking = child_data.get("is_blinking", False)
+                        new_item._refresh()
+                        new_item.setPos(*child_data.get("pos", [200.0, 200.0]))
+                        self.add_loaded_asset(new_item, child_data)
+                        ti = QTreeWidgetItem(top_item, ["", "🎯 Blob Follow Text",
+                                                        "Active in Step", ""])
+                        ti.setData(1, Qt.ItemDataRole.UserRole, new_item)
                     elif ctype == "InteractiveCaptureItem":
                         new_item = InteractiveCaptureItem(
                             child_data.get("item_name", "Capture"),
@@ -856,6 +895,9 @@ class AuthoringInterface(QMainWindow):
         btn_user_wait = QPushButton("👆 Insert User Wait")
         btn_user_wait.clicked.connect(self.insert_user_wait)
         btn_user_wait.setStyleSheet("background-color: #16a085; font-weight: bold;")
+        btn_follow = QPushButton("🎯 Insert Blob Follow Text")
+        btn_follow.clicked.connect(self.safe_slot(self.insert_blob_follow))
+        btn_follow.setStyleSheet("background-color: #2e86c1; font-weight: bold;")
         btn_pdf = QPushButton("📄 Import from PDF")
         btn_pdf.clicked.connect(self.safe_slot(self.import_pdf))
         btn_pdf.setStyleSheet("background-color: #9b59b6; font-weight: bold;")
@@ -865,7 +907,7 @@ class AuthoringInterface(QMainWindow):
         self.insert_tools_container = QWidget()
         insert_lay = QVBoxLayout(self.insert_tools_container)
         insert_lay.setContentsMargins(0, 0, 0, 0)
-        for b in [btn_step, btn_txt, btn_img, btn_vid, btn_shape, btn_html, btn_model3d, btn_capture, btn_llm, btn_pdf, btn_clear, btn_timer, btn_obs, btn_wait, btn_flow, btn_user_wait]:
+        for b in [btn_step, btn_txt, btn_img, btn_vid, btn_shape, btn_html, btn_model3d, btn_capture, btn_llm, btn_follow, btn_pdf, btn_clear, btn_timer, btn_obs, btn_wait, btn_flow, btn_user_wait]:
             insert_lay.addWidget(b)
         insert_lay.addStretch()
 
@@ -1234,8 +1276,10 @@ Create an intelligent, multi-step JSON sequence that accomplishes the following 
                 self.vision_tool_responses = data.get("responses", {})
                 self.vision_tool_response_times = data.get("response_times", {})
                 self.vision_captures = data.get("captures", {})
+                self.vision_geometry = data.get("geometry", {})
                 self.sync_llm_call_displays()
                 self.sync_capture_items()
+                self.sync_blob_followers()
         except OSError:
             # Transient and expected on Windows: Observatory swaps this file
             # via os.replace, and a read landing in that instant gets a
@@ -1646,6 +1690,90 @@ Create an intelligent, multi-step JSON sequence that accomplishes the following 
 
                 self.build_animation_controls(item)
                 self.build_lock_and_reset_controls(item, show_lock=True)
+                self.build_output_canvas_selector(item)
+
+            elif isinstance(item, InteractiveBlobFollowItem):
+                self.prop_form.addRow(self._hint(
+                    "<i>Follows a blob that Observatory's <b>Blob Detection</b> "
+                    "tool finds, so the text stays on the part as it moves. "
+                    "Needs a projector calibration to know where the blob is "
+                    "on this canvas.</i>"))
+
+                cal_state = ("<span style='color:#2ecc71;'>calibrated</span>"
+                             if self.calibration is not None else
+                             "<span style='color:#e74c3c;'>NOT calibrated - "
+                             "run or load a calibration</span>")
+                self.prop_form.addRow("Mapping:", QLabel(cal_state))
+
+                msg = QLineEdit(item.message)
+                msg.textChanged.connect(lambda t, i=item: i.set_message(t))
+                self.prop_form.addRow("Text:", msg)
+
+                file_lay = QHBoxLayout()
+                lbl_obs = QLineEdit(os.path.basename(item.observatory_file)
+                                    if item.observatory_file else "None")
+                lbl_obs.setReadOnly(True)
+                btn_obs = QPushButton("Browse")
+
+                def browse_follow(i=item, lbl=lbl_obs):
+                    path = self.prompt_open_file("Select Observatory Project",
+                                                 "JSON Files (*.json)")
+                    if path:
+                        i.observatory_file = path
+                        lbl.setText(os.path.basename(path))
+                        QTimer.singleShot(0, self.safe_slot(
+                            self.build_asset_properties, i))
+
+                btn_obs.clicked.connect(self.safe_slot(browse_follow))
+                file_lay.addWidget(lbl_obs)
+                file_lay.addWidget(btn_obs)
+                self.prop_form.addRow("Observatory File:", file_lay)
+
+                cb_tool = QComboBox()
+                tools = (self.parse_observatory_file_silent(item.observatory_file)
+                         if item.observatory_file
+                         and os.path.exists(item.observatory_file) else ["None"])
+                cb_tool.addItems(tools)
+                cb_tool.setCurrentText(item.source_tool if item.source_tool in tools
+                                       else "None")
+                cb_tool.currentTextChanged.connect(
+                    lambda v, i=item: setattr(i, "source_tool", v))
+                self.prop_form.addRow("Blob Tool:", cb_tool)
+
+                cb_anchor = QComboBox()
+                cb_anchor.addItems(list(InteractiveBlobFollowItem.ANCHORS))
+                cb_anchor.setCurrentText(item.anchor)
+                cb_anchor.currentTextChanged.connect(
+                    lambda v, i=item: i.set_anchor(v))
+                self.prop_form.addRow("Anchor:", cb_anchor)
+
+                spin_off = QSpinBox()
+                spin_off.setRange(0, 800)
+                spin_off.setValue(item.offset_px)
+                spin_off.valueChanged.connect(lambda v, i=item: i.set_offset(v))
+                self.prop_form.addRow("Offset (px):", spin_off)
+
+                spin_font = QSpinBox()
+                spin_font.setRange(8, 300)
+                spin_font.setValue(item.current_font_size)
+                spin_font.valueChanged.connect(lambda v, i=item: i.set_font_size(v))
+                self.prop_form.addRow("Font Size:", spin_font)
+
+                self.prop_form.addRow("Text Color:", self.build_color_picker_button(
+                    lambda i=item: i.text_color,
+                    lambda c, i=item: i.set_text_color(c)))
+
+                chk_marker = QCheckBox("Ring around the blob")
+                chk_marker.setChecked(item.show_marker)
+                chk_marker.toggled.connect(
+                    lambda on, i=item: (setattr(i, "show_marker", bool(on)), i.update()))
+                self.prop_form.addRow("Marker:", chk_marker)
+
+                chk_bg = QCheckBox("Background box behind the text")
+                chk_bg.setChecked(item.show_background)
+                chk_bg.toggled.connect(lambda on, i=item: i.set_show_background(on))
+                self.prop_form.addRow("Background:", chk_bg)
+
                 self.build_output_canvas_selector(item)
 
             elif isinstance(item, InteractiveCaptureItem):
@@ -2508,6 +2636,62 @@ Create an intelligent, multi-step JSON sequence that accomplishes the following 
         self.highlight_current_run_step()
 
         self.engine_prev_vision_states = self.vision_tool_states.copy()
+
+    def load_calibration(self, path_or_dict):
+        """Load a projector<->camera mapping produced by calibration.py."""
+        import calibration
+        data = path_or_dict
+        if not isinstance(data, dict):
+            with open(path_or_dict, "r", encoding="utf-8") as fh:
+                data = json.load(fh)
+        self.calibration = calibration.CalibrationResult.from_dict(data)
+        self.log_message(
+            f"Calibration loaded: {self.calibration.pattern}, "
+            f"{self.calibration.point_count} points, "
+            f"{self.calibration.reprojection_error:.2f}px error.")
+        return self.calibration
+
+    def save_calibration(self, path):
+        if self.calibration is None:
+            raise ValueError("There is no calibration to save.")
+        with open(path, "w", encoding="utf-8") as fh:
+            json.dump(self.calibration.to_dict(), fh, indent=2)
+
+    def sync_blob_followers(self):
+        """Move every blob-following asset onto its blob.
+
+        Observatory publishes the centroid in CAMERA pixels; the calibration
+        converts that to canvas pixels. Without a calibration the followers are
+        told so explicitly rather than being left to draw somewhere arbitrary -
+        a graphic in the wrong place on a work surface is worse than an obvious
+        "not calibrated".
+        """
+        followers = [i for i in self.all_canvas_items()
+                     if isinstance(i, InteractiveBlobFollowItem)]
+        if not followers:
+            return
+        calibrated = self.calibration is not None
+
+        for item in followers:
+            try:
+                info = self.vision_geometry.get(item.source_tool) or {}
+                found = bool(info.get("found")) and calibrated
+                if found:
+                    cx, cy = self.calibration.camera_to_canvas(
+                        info.get("camera_x", 0), info.get("camera_y", 0))
+                    item.set_blob_canvas_position(cx, cy, True, True)
+                else:
+                    item.set_blob_canvas_position(0, 0, False, calibrated)
+            except RuntimeError:
+                continue        # item's canvas went away mid-tick
+            except Exception as e:
+                self.log_message(
+                    f"<span style='color:orange;'>Blob follower "
+                    f"'{item.source_tool}': {e}</span>")
+
+    def insert_blob_follow(self):
+        item = InteractiveBlobFollowItem()
+        self.insert_asset(item, "🎯 Blob Follow Text")
 
     def restore_timer_display(self, timer_data, child_data):
         """Rebuild a Timer's on-canvas countdown from saved project data."""

@@ -948,6 +948,184 @@ class InteractiveTimerItem(AnimatableMixin, QGraphicsRectItem):
         self._refresh()
 
 
+class InteractiveBlobFollowItem(AnimatableMixin, QGraphicsRectItem):
+    """Text that follows a part the camera found.
+
+    Observatory's Blob Detection tool publishes its centroid in camera pixels;
+    the projector calibration maps that into canvas pixels; this draws text
+    there. The result is an instruction that stays on the part as it moves -
+    "insert here", an orientation, a part number.
+
+    Anchoring is relative to the blob rather than absolute, because text
+    centred ON a part usually obscures the thing the operator is meant to look
+    at. Offset and anchor are separate so the text can sit consistently above
+    or beside it whatever the blob does.
+
+    Placement is only as good as the calibration. Without one this cannot know
+    where the blob is on the canvas, so it says so on the canvas rather than
+    silently drawing in the wrong place.
+    """
+
+    ANCHORS = ("Above", "Below", "Left", "Right", "Centre")
+
+    def __init__(self, text="Insert here", observatory_file="", source_tool="None"):
+        super().__init__(0, 0, 360, 120)
+        self.trigger = TriggerSettings()
+        self._init_animation()
+        self.observatory_file = observatory_file
+        self.source_tool = source_tool
+        self.message = text
+        self.anchor = "Above"
+        self.offset_px = 90
+        self.current_font_size = 32
+        self.text_color = QColor("#00ff99")
+        self.show_background = False
+        self.show_marker = True
+        self.marker_radius = 26
+        self.is_blinking = False
+
+        # Last mapped canvas position, and whether the blob is currently
+        # visible. Held so a lost blob can hide the text instead of stranding
+        # it at the last known spot.
+        self.blob_canvas_pos = None
+        self.blob_found = False
+        self.calibrated = False
+
+        self.setFlags(QGraphicsItem.GraphicsItemFlag.ItemIsMovable |
+                      QGraphicsItem.GraphicsItemFlag.ItemIsSelectable)
+        self._apply_background()
+
+        self.label = QGraphicsTextItem(self)
+        self.handle = MediaResizeHandle(self)
+        self.handle.setPos(self.rect().width() - 6, self.rect().height() - 6)
+        self._refresh()
+
+    # --- appearance -------------------------------------------------------
+    def _apply_background(self):
+        if self.show_background:
+            self.setPen(QPen(QColor("#00ff99"), 2))
+            self.setBrush(QBrush(QColor(10, 10, 10, 190)))
+        else:
+            self.setPen(QPen(Qt.PenStyle.NoPen))
+            self.setBrush(QBrush(Qt.BrushStyle.NoBrush))
+
+    def set_show_background(self, on):
+        self.show_background = bool(on)
+        self._apply_background()
+        self.update()
+
+    def set_message(self, text):
+        self.message = text
+        self._refresh()
+
+    def set_font_size(self, size):
+        self.current_font_size = int(size)
+        self._refresh()
+
+    def set_text_color(self, color):
+        self.text_color = color
+        self._refresh()
+
+    def set_anchor(self, anchor):
+        self.anchor = anchor if anchor in self.ANCHORS else "Above"
+        self._reposition()
+
+    def set_offset(self, pixels):
+        self.offset_px = int(pixels)
+        self._reposition()
+
+    def _refresh(self):
+        self.label.setFont(QFont("Arial", self.current_font_size, QFont.Weight.Bold))
+        self.label.setDefaultTextColor(self.text_color)
+        if not self.calibrated:
+            self.label.setPlainText("⚠ not calibrated")
+        elif not self.blob_found:
+            self.label.setPlainText(self.message)
+        else:
+            self.label.setPlainText(self.message)
+        bounds = self.label.boundingRect()
+        self.setRect(0, 0, max(120.0, bounds.width() + 24),
+                     max(60.0, bounds.height() + 20))
+        self.label.setPos((self.rect().width() - bounds.width()) / 2.0,
+                          (self.rect().height() - bounds.height()) / 2.0)
+        self.handle.setPos(self.rect().width() - 6, self.rect().height() - 6)
+        self.update()
+
+    # --- driven by Studio's IPC tick -------------------------------------
+    def set_blob_canvas_position(self, x, y, found=True, calibrated=True):
+        """Place this at a blob whose position has already been mapped into
+        canvas pixels. Studio does the mapping; this only positions."""
+        self.calibrated = bool(calibrated)
+        self.blob_found = bool(found)
+        self.blob_canvas_pos = (float(x), float(y)) if found else None
+        self._refresh()
+        self._reposition()
+
+    def _reposition(self):
+        if not self.blob_canvas_pos:
+            return
+        bx, by = self.blob_canvas_pos
+        w, h = self.rect().width(), self.rect().height()
+        offset = self.offset_px
+        if self.anchor == "Above":
+            pos = (bx - w / 2.0, by - offset - h)
+        elif self.anchor == "Below":
+            pos = (bx - w / 2.0, by + offset)
+        elif self.anchor == "Left":
+            pos = (bx - offset - w, by - h / 2.0)
+        elif self.anchor == "Right":
+            pos = (bx + offset, by - h / 2.0)
+        else:                                   # Centre
+            pos = (bx - w / 2.0, by - h / 2.0)
+        self.setPos(*pos)
+
+    def paint(self, painter, option, widget=None):
+        super().paint(painter, option, widget)
+        # A ring drawn back at the blob itself, so it is obvious which part
+        # the text belongs to when several are on the bench.
+        if not (self.show_marker and self.blob_found and self.blob_canvas_pos):
+            return
+        painter.save()
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+        bx, by = self.blob_canvas_pos
+        local_x = bx - self.pos().x()
+        local_y = by - self.pos().y()
+        painter.setPen(QPen(self.text_color, 3))
+        painter.setBrush(QBrush(Qt.BrushStyle.NoBrush))
+        painter.drawEllipse(QPointF(local_x, local_y),
+                            float(self.marker_radius), float(self.marker_radius))
+        painter.restore()
+
+    def boundingRect(self):
+        base = super().boundingRect()
+        if not (self.show_marker and self.blob_found and self.blob_canvas_pos):
+            return base
+        # The marker is drawn outside the text box, so the bounding rect has
+        # to cover it or Qt will leave trails where it was.
+        bx, by = self.blob_canvas_pos
+        local_x = bx - self.pos().x()
+        local_y = by - self.pos().y()
+        r = self.marker_radius + 4
+        return base.united(QRectF(local_x - r, local_y - r, r * 2, r * 2))
+
+    def resize_by_drag(self, x, y):
+        # The text box sizes itself to the text, so dragging scales the FONT.
+        self.current_font_size = max(8, min(300, int(y * 0.4)))
+        self._refresh()
+        self._reposition()
+
+    def reset_to_default(self):
+        self.reset_scale_rotation_animation()
+        self.anchor = "Above"
+        self.offset_px = 90
+        self.current_font_size = 32
+        self.text_color = QColor("#00ff99")
+        self.show_background = False
+        self.show_marker = True
+        self._apply_background()
+        self._refresh()
+
+
 class InteractiveHTMLItem(QGraphicsProxyWidget):
     """A movable/resizable window on the Output Canvas hosting a real,
     JS-capable QWebEngineView. This is the one place in the app that embeds
