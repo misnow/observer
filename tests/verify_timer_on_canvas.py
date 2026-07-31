@@ -175,6 +175,47 @@ except Exception as e:
 
 # =====================================================================
 w("")
+w("=== REGRESSION: visible DURING the run, not only after it ===")
+# Reported symptom: the countdown was invisible until the timer expired, then
+# appeared showing 0.0. Cause: per-step, only step["assets"] were made
+# visible, and the timer face hangs off step["timer_node"], so it was never
+# shown while running - it only appeared when returning to Design Mode made
+# everything visible again, by which point it read 0.0.
+ui.set_timer_on_canvas(node, True)
+node.duration = 30.0
+face = node.display_item
+face.setVisible(False)                      # as hide_all_canvas_items leaves it
+ui.execution_sequence = ui.build_execution_sequence()
+step = next(s for s in ui.execution_sequence if s.get("timer_node") is node)
+
+check("precondition: hidden before the step runs", face.isVisible() is False)
+
+# Call the REAL activation, rather than reimplementing it here - a test that
+# duplicates production code cannot catch a bug in production code.
+ui.show_timer_face(step)
+
+check("the countdown is VISIBLE once its step starts", face.isVisible() is True,
+      "this is the reported bug")
+check("and reads the full duration, not 0.0", face.label.toPlainText() == "30.0",
+      face.label.toPlainText())
+
+ui.sync_timer_displays(remaining=18.0, running=True)
+check("it counts down while visible", face.label.toPlainText() == "18.0"
+      and face.isVisible(), face.label.toPlainText())
+
+w("")
+w("=== rotation ===")
+face.setRotation(35)
+check("the countdown can be rotated", abs(face.rotation() - 35) < 0.01,
+      str(face.rotation()))
+origin = face.transformOriginPoint()
+check("it rotates about its CENTRE, not the top-left corner",
+      abs(origin.x() - face.rect().width() / 2) < 1
+      and abs(origin.y() - face.rect().height() / 2) < 1,
+      f"origin {origin} vs centre of {face.rect().width()}x{face.rect().height()}")
+face.setRotation(0)
+
+w("")
 w("=== survives a save/load round trip ===")
 ui.set_timer_on_canvas(node, True)
 node.display_item.setPos(410, 265)
@@ -183,6 +224,7 @@ node.display_item.set_font_size(96)
 node.display_item.set_text_color(QColor("#e74c3c"))
 node.display_item.set_time_format("MM:SS")
 node.display_item.set_show_background(False)
+node.display_item.setRotation(25)
 node.duration = 42.0
 
 proj = os.path.join(ISO, "timer.json")
@@ -223,6 +265,7 @@ if rt.display_item:
     check("colour restored", d.text_color.name() == "#e74c3c", d.text_color.name())
     check("format restored", d.time_format == "MM:SS", d.time_format)
     check("background flag restored", d.show_background is False)
+    check("rotation restored", abs(d.rotation() - 25) < 0.01, str(d.rotation()))
 
 w("")
 w("=== a project saved before this feature still loads ===")

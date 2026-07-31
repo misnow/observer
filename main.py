@@ -1096,6 +1096,59 @@ class ObservatoryEngine(QMainWindow):
             slider_max_area.valueChanged.connect(lambda v, i=tool_item: self.update_tool_val(i, 'blob_max_area', v))
             self.tool_prop_layout.addRow("Max Area:", slider_max_area)
 
+            spin_count = QSpinBox()
+            spin_count.setRange(1, 20)
+            spin_count.setValue(int(getattr(tool_item, 'blob_target_count', 1)))
+            spin_count.valueChanged.connect(
+                lambda v, i=tool_item: self.update_tool_val(i, 'blob_target_count', v))
+            self.tool_prop_layout.addRow("Blobs to find:", spin_count)
+
+            cb_mode = QComboBox()
+            for label, data in (("Otsu - automatic level (default)", "Otsu"),
+                                ("Manual level", "Manual"),
+                                ("Motion - only what moved", "Motion")):
+                cb_mode.addItem(label, data)
+            idx = cb_mode.findData(getattr(tool_item, 'blob_thresh_mode', 'Otsu'))
+            cb_mode.setCurrentIndex(max(0, idx))
+            cb_mode.currentIndexChanged.connect(
+                lambda _i, i=tool_item, c=cb_mode: (
+                    self.update_tool_val(i, 'blob_thresh_mode', c.currentData()),
+                    self.load_tool_properties_to_ui(i)))
+            self.tool_prop_layout.addRow("Detection:", cb_mode)
+
+            mode = getattr(tool_item, 'blob_thresh_mode', 'Otsu')
+            if mode == "Manual":
+                slider_level = QSlider(Qt.Orientation.Horizontal)
+                slider_level.setRange(1, 254)
+                slider_level.setValue(int(getattr(tool_item, 'blob_manual_thresh', 127)))
+                slider_level.valueChanged.connect(
+                    lambda v, i=tool_item: self.update_tool_val(i, 'blob_manual_thresh', v))
+                self.tool_prop_layout.addRow("Level:", slider_level)
+            elif mode == "Motion":
+                slider_motion = QSlider(Qt.Orientation.Horizontal)
+                slider_motion.setRange(1, 120)
+                slider_motion.setValue(int(getattr(tool_item, 'blob_motion_thresh', 25)))
+                slider_motion.valueChanged.connect(
+                    lambda v, i=tool_item: self.update_tool_val(i, 'blob_motion_thresh', v))
+                self.tool_prop_layout.addRow("Motion Sensitivity:", slider_motion)
+                self.tool_prop_layout.addRow(self._hint(
+                    "<i>Finds blobs in what CHANGED against the trained reference "
+                    "frame, so a busy but static background subtracts away. Train "
+                    "a reference with the scene empty, then the part that appears "
+                    "is the blob. Lower = more sensitive.</i>"))
+
+            slider_denoise = QSlider(Qt.Orientation.Horizontal)
+            slider_denoise.setRange(1, 21)
+            slider_denoise.setValue(int(getattr(tool_item, 'blob_denoise', 5)))
+            slider_denoise.valueChanged.connect(
+                lambda v, i=tool_item: self.update_tool_val(i, 'blob_denoise', v))
+            self.tool_prop_layout.addRow("Noise Cleanup:", slider_denoise)
+
+            self.tool_prop_layout.addRow(self._hint(
+                "<i>Score is <b>blobs found / blobs wanted</b>, so finding the one "
+                "blob you asked for scores 100. Raise <b>Min Area</b> to ignore "
+                "specks and <b>Noise Cleanup</b> to erode them away.</i>"))
+
             self.blob_coord_label = QLabel(
                 f"X: {tool_item.last_blob_x} px | Y: {tool_item.last_blob_y} px\nAngle: {tool_item.last_blob_a:.1f}°")
             self.blob_coord_label.setStyleSheet("color: #2ecc71; font-weight: bold;")
@@ -1397,12 +1450,67 @@ class ObservatoryEngine(QMainWindow):
                                 self.tool_states[item.tool_name] = False
 
                 elif item.tool_type == "Blob Detection":
+                    mode = getattr(item, 'blob_thresh_mode', 'Otsu')
+                    # blob_color says which way round the subject is: light on
+                    # dark, or dark on light. Invert so the subject is always
+                    # the bright side before thresholding.
                     work_img = roi_gray if item.blob_color == 255 else cv2.bitwise_not(roi_gray)
-                    _, thresh = cv2.threshold(work_img, 127, 255, cv2.THRESH_BINARY)
-                    contours, _ = cv2.findContours(thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+                    blob_note = ""
 
-                    valid_blobs = [c for c in contours if item.threshold <= cv2.contourArea(c) <= item.blob_max_area]
-                    item.current_score = min(100, len(valid_blobs) * 20)
+                    if mode == "Motion":
+                        # Only what MOVED becomes a blob, so a busy but static
+                        # background subtracts away entirely - this is what
+                        # finds a part in a cluttered field of view.
+                        ref = item.reference_frame
+                        if ref is not None and ref.shape == roi_gray.shape:
+                            delta = cv2.absdiff(ref, roi_gray)
+                            _, thresh = cv2.threshold(
+                                delta, getattr(item, 'blob_motion_thresh', 25),
+                                255, cv2.THRESH_BINARY)
+                        else:
+                            thresh = None
+                            blob_note = "no reference frame - train one first"
+                    elif mode == "Manual":
+                        _, thresh = cv2.threshold(
+                            work_img, getattr(item, 'blob_manual_thresh', 127),
+                            255, cv2.THRESH_BINARY)
+                    else:
+                        # Otsu picks the level from this ROI's own histogram
+                        # every frame, so it tracks the lighting instead of
+                        # assuming a fixed 127 that only suited one scene.
+                        _, thresh = cv2.threshold(work_img, 0, 255,
+                                                  cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+
+                    if thresh is None:
+                        valid_blobs = []
+                    else:
+                        # Open then close: drop camera-noise specks, then fill
+                        # pinholes so one part stays one contour instead of
+                        # fragmenting into several.
+                        k = max(1, int(getattr(item, 'blob_denoise', 5)))
+                        if k > 1:
+                            kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (k, k))
+                            thresh = cv2.morphologyEx(thresh, cv2.MORPH_OPEN, kernel)
+                            thresh = cv2.morphologyEx(thresh, cv2.MORPH_CLOSE, kernel)
+                        contours, _ = cv2.findContours(thresh, cv2.RETR_EXTERNAL,
+                                                       cv2.CHAIN_APPROX_SIMPLE)
+                        valid_blobs = [c for c in contours
+                                       if item.threshold <= cv2.contourArea(c)
+                                       <= item.blob_max_area]
+
+                    # Biggest first, then keep only as many as were asked for:
+                    # with a target of 1 in a noisy scene, that is the single
+                    # strongest candidate rather than whatever came first.
+                    valid_blobs.sort(key=cv2.contourArea, reverse=True)
+                    target = max(1, int(getattr(item, 'blob_target_count', 1)))
+                    valid_blobs = valid_blobs[:target]
+
+                    # Score = "did I find what I was looking for", so 1 of 1
+                    # scores 100 and clears the default sensitivity. The old
+                    # count*20 made the one-blob case impossible to trigger.
+                    item.current_score = int(100.0 * min(1.0, len(valid_blobs) / target))
+                    item.last_blob_count = len(valid_blobs)
+                    item.last_blob_note = blob_note
 
                     if item.current_score >= item.sensitivity and valid_blobs:
                         self.tool_states[item.tool_name] = True
@@ -1427,6 +1535,22 @@ class ObservatoryEngine(QMainWindow):
                             # on-screen readout but useless to Studio: the
                             # projector<->camera homography is solved in camera
                             # pixels, so that is what has to cross the IPC.
+                            # Every kept blob, largest first, so a multi-blob
+                            # target can drive several followers. blobs[0] is
+                            # always the same one as camera_x/camera_y.
+                            all_blobs = []
+                            for contour in valid_blobs:
+                                moments = cv2.moments(contour)
+                                if abs(moments["m00"]) < 1e-9:
+                                    continue
+                                bcx = moments["m10"] / moments["m00"]
+                                bcy = moments["m01"] / moments["m00"]
+                                brect = cv2.minAreaRect(contour)
+                                all_blobs.append({
+                                    "camera_x": int(x1 + bcx), "camera_y": int(y1 + bcy),
+                                    "angle": float(brect[2]),
+                                    "area": float(cv2.contourArea(contour))})
+
                             self.tool_geometry[item.tool_name] = {
                                 "type": "Blob Detection", "found": True,
                                 "camera_x": int(gx), "camera_y": int(gy),
@@ -1434,12 +1558,19 @@ class ObservatoryEngine(QMainWindow):
                                 "area": float(cv2.contourArea(best_c)),
                                 "rel_x": int(item.last_blob_x),
                                 "rel_y": int(item.last_blob_y),
+                                "count": len(all_blobs),
+                                "blobs": all_blobs,
                                 "time": time.time()}
 
-                            cv2.drawMarker(display_frame, (gx, gy), (0, 255, 0), cv2.MARKER_CROSS, 20, 2)
-                            box = cv2.boxPoints(rect);
-                            box = np.int32(box) + np.array([x1, y1])
-                            cv2.drawContours(display_frame, [box], 0, (255, 0, 255), 2)
+                            for order, contour in enumerate(valid_blobs):
+                                brect = cv2.minAreaRect(contour)
+                                box = np.int32(cv2.boxPoints(brect)) + np.array([x1, y1])
+                                # The primary blob is drawn brighter so it is
+                                # obvious which one drives the position.
+                                colour = (255, 0, 255) if order == 0 else (140, 0, 140)
+                                cv2.drawContours(display_frame, [box], 0, colour, 2)
+                            cv2.drawMarker(display_frame, (gx, gy), (0, 255, 0),
+                                           cv2.MARKER_CROSS, 20, 2)
 
                             if item == active_item and hasattr(self, 'blob_coord_label'):
                                 self.blob_coord_label.setText(
@@ -1709,6 +1840,11 @@ class ObservatoryEngine(QMainWindow):
                         "use_edge": item.use_edge, "filter_edge": item.filter_edge,
                         "use_depth": item.use_depth, "filter_depth": item.filter_depth,
                         "blob_color": item.blob_color, "blob_max_area": item.blob_max_area,
+                        "blob_target_count": getattr(item, "blob_target_count", 1),
+                        "blob_thresh_mode": getattr(item, "blob_thresh_mode", "Otsu"),
+                        "blob_manual_thresh": getattr(item, "blob_manual_thresh", 127),
+                        "blob_motion_thresh": getattr(item, "blob_motion_thresh", 25),
+                        "blob_denoise": getattr(item, "blob_denoise", 5),
                         "auto_capture_reference": item.auto_capture_reference,
                         "capture_mode": getattr(item, "capture_mode", "ROI"),
                         "captured_path": getattr(item, "captured_path", ""),
@@ -1806,6 +1942,11 @@ class ObservatoryEngine(QMainWindow):
 
                     roi.blob_color = t.get("blob_color", 0)
                     roi.blob_max_area = t.get("blob_max_area", 5000)
+                    roi.blob_target_count = t.get("blob_target_count", roi.blob_target_count)
+                    roi.blob_thresh_mode = t.get("blob_thresh_mode", roi.blob_thresh_mode)
+                    roi.blob_manual_thresh = t.get("blob_manual_thresh", roi.blob_manual_thresh)
+                    roi.blob_motion_thresh = t.get("blob_motion_thresh", roi.blob_motion_thresh)
+                    roi.blob_denoise = t.get("blob_denoise", roi.blob_denoise)
                     roi.auto_capture_reference = t.get("auto_capture_reference", False)
 
                     # Fall back to the constructor defaults so projects saved

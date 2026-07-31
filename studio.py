@@ -503,7 +503,8 @@ class AuthoringInterface(QMainWindow):
                             "font_size": disp.current_font_size,
                             "text_color": disp.text_color.name(),
                             "time_format": disp.time_format,
-                            "show_background": disp.show_background}
+                            "show_background": disp.show_background,
+                            "rotation": disp.rotation()}
                     step_block["children"].append(timer_entry)
                 elif isinstance(asset, ObservatoryNodeData):
                     step_block["children"].append({"type": "ObservatoryNodeData", "filepath": asset.filepath})
@@ -2043,6 +2044,10 @@ Create an intelligent, multi-step JSON sequence that accomplishes the following 
                 spin_dur.setRange(0.1, 3600.0)
                 spin_dur.setValue(asset.duration)
                 spin_dur.valueChanged.connect(lambda v: setattr(asset, 'duration', v))
+                # Keep the on-canvas face in step, or it keeps counting from
+                # whatever the duration was when it was created.
+                spin_dur.valueChanged.connect(
+                    lambda v, a=asset: self.sync_timer_duration(a, v))
                 spin_dur.valueChanged.connect(lambda v: self.update_tree_labels())
                 self.node_prop_form.addRow("Duration (sec):", spin_dur)
 
@@ -2085,6 +2090,13 @@ Create an intelligent, multi-step JSON sequence that accomplishes the following 
                     chk_bg.setChecked(display.show_background)
                     chk_bg.toggled.connect(lambda on, d=display: d.set_show_background(on))
                     self.node_prop_form.addRow("Background:", chk_bg)
+
+                    spin_rot = QSpinBox()
+                    spin_rot.setRange(0, 359)
+                    spin_rot.setSuffix("°")
+                    spin_rot.setValue(int(display.rotation()))
+                    spin_rot.valueChanged.connect(lambda v, d=display: d.setRotation(v))
+                    self.node_prop_form.addRow("Rotation:", spin_rot)
 
                     self.node_prop_form.addRow(self._hint(
                         "<i>The countdown is on the canvas now - drag it to position "
@@ -2499,6 +2511,8 @@ Create an intelligent, multi-step JSON sequence that accomplishes the following 
 
             if step["obs_node"] and step["obs_node"].filepath: self.emit_observatory_command(step["obs_node"].filepath)
 
+            self.show_timer_face(step)
+
             for asset in step["assets"]:
                 asset.setVisible(True)
                 if hasattr(asset, 'trigger') and asset.trigger.observatory_file:
@@ -2712,6 +2726,7 @@ Create an intelligent, multi-step JSON sequence that accomplishes the following 
         item.text_color = QColor(display.get("text_color", "#f1c40f"))
         item.time_format = display.get("time_format", "Seconds")
         item.set_show_background(display.get("show_background", True))
+        item.setRotation(display.get("rotation", 0))
         item._refresh()
 
         timer_data.display_item = item
@@ -2733,6 +2748,41 @@ Create an intelligent, multi-step JSON sequence that accomplishes the following 
             self.remove_timer_display(timer_data)
         # The panel gains/loses the appearance controls, so rebuild it.
         QTimer.singleShot(0, self.safe_slot(self.build_node_properties, timer_data))
+
+    def show_timer_face(self, step):
+        """Reveal a step's on-canvas countdown as the step begins.
+
+        Extracted so the behaviour is reachable from a test instead of only
+        from deep inside the execution tick.
+
+        The Timer's face is NOT in step["assets"] - it hangs off the timer
+        node - so without this it was never made visible during the run, and
+        only appeared once Design Mode made everything visible again, by which
+        point it read 0.0. That was the reported bug.
+        """
+        node = step.get("timer_node") if isinstance(step, dict) else None
+        face = getattr(node, 'display_item', None)
+        if face is None:
+            return
+        try:
+            # The node is the authority on duration; the face may have been
+            # created when it was something else.
+            face.duration = node.duration
+            face.reset_countdown()
+            face.setVisible(True)
+        except RuntimeError:
+            node.display_item = None
+
+    def sync_timer_duration(self, timer_data, duration):
+        """Push a Timer node's duration onto its on-canvas face."""
+        item = getattr(timer_data, 'display_item', None)
+        if item is None:
+            return
+        try:
+            item.duration = float(duration)
+            item.reset_countdown()
+        except RuntimeError:
+            timer_data.display_item = None
 
     def remove_timer_display(self, timer_data):
         item = getattr(timer_data, 'display_item', None)

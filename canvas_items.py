@@ -924,6 +924,9 @@ class InteractiveTimerItem(AnimatableMixin, QGraphicsRectItem):
         bounds = self.label.boundingRect()
         self.label.setPos((rect.width() - bounds.width()) / 2.0,
                           (rect.height() - bounds.height()) / 2.0)
+        # Rotate about the middle of the box, not its top-left corner -
+        # otherwise a rotated countdown swings away from where it was placed.
+        self.setTransformOriginPoint(rect.center())
 
     # --- geometry ---------------------------------------------------------
     def resize_by_drag(self, x, y):

@@ -183,6 +183,28 @@ class SearchROI(QGraphicsRectItem):
         # Blob Properties
         self.blob_color = 0  # 0=Dark, 255=Light
         self.blob_max_area = 5000
+        # How many blobs this tool expects to find. The score is "did I find
+        # what I was looking for", so one blob against a target of one scores
+        # 100. The old scoring was len(blobs) * 20, which meant a single blob
+        # could only ever reach 20 and could never clear the default
+        # sensitivity of 50 - the one-blob case was impossible to trigger.
+        self.blob_target_count = 1
+        # How the ROI is turned into a black/white mask before contours are
+        # found:
+        #   "Otsu"   - threshold chosen from the ROI's own histogram every
+        #              frame. Survives lighting changes; the sane default.
+        #   "Manual" - fixed level, for when Otsu picks badly (e.g. the ROI
+        #              is almost entirely one shade).
+        #   "Motion" - difference against the trained reference frame, so
+        #              only what MOVED becomes a blob. This is what finds a
+        #              part in a cluttered field of view: static background,
+        #              however busy, subtracts away.
+        self.blob_thresh_mode = "Otsu"
+        self.blob_manual_thresh = 127
+        self.blob_motion_thresh = 25
+        # Speck removal before contours. Camera noise otherwise produces
+        # dozens of tiny contours that swamp the real subject.
+        self.blob_denoise = 5
         self.last_blob_x, self.last_blob_y, self.last_blob_a = 0, 0, 0.0
 
         # LLM Properties
