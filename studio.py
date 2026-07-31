@@ -17,7 +17,8 @@ from ui_components import DARK_THEME, LLMWorker, LLMProviderSettingsWidget
 from canvas_items import (TriggerSettings, AnimatableMixin, InteractiveTextItem,
                           MediaResizeHandle, InteractiveMediaItem, InteractiveShapeItem,
                           Interactive3DModelItem, InteractiveCaptureItem,
-                          InteractiveHTMLItem, InteractiveLLMTextItem)
+                          InteractiveHTMLItem, InteractiveLLMTextItem,
+                          InteractiveTimerItem)
 
 # ---------------------------------------------------------
 # 1. DATA STRUCTURES & SEQUENCE NODES
@@ -30,6 +31,12 @@ class FlowControlData:
 class TimerData:
     def __init__(self, duration=5.0):
         self.duration = duration
+        # Optionally show the countdown on an output canvas. The node itself
+        # stays the authority on timing; display_item is only its face, and is
+        # None whenever show_on_canvas is off.
+        self.show_on_canvas = False
+        self.output_canvas = 0
+        self.display_item = None
 
 class ClearCanvasData:
     def __init__(self):
@@ -463,7 +470,21 @@ class AuthoringInterface(QMainWindow):
                     step_block["children"].append(
                         {"type": "FlowControlData", "action": asset.action, "target_step": asset.target_step})
                 elif isinstance(asset, TimerData):
-                    step_block["children"].append({"type": "TimerData", "duration": asset.duration})
+                    disp = getattr(asset, "display_item", None)
+                    timer_entry = {"type": "TimerData", "duration": asset.duration,
+                                   "show_on_canvas": getattr(asset, "show_on_canvas", False),
+                                   "output_canvas": getattr(asset, "output_canvas", 0)}
+                    if disp is not None:
+                        # Position/size/appearance of the on-canvas countdown,
+                        # so a placed timer face comes back where it was put.
+                        timer_entry["display"] = {
+                            "pos": [disp.pos().x(), disp.pos().y()],
+                            "w": disp.rect().width(), "h": disp.rect().height(),
+                            "font_size": disp.current_font_size,
+                            "text_color": disp.text_color.name(),
+                            "time_format": disp.time_format,
+                            "show_background": disp.show_background}
+                    step_block["children"].append(timer_entry)
                 elif isinstance(asset, ObservatoryNodeData):
                     step_block["children"].append({"type": "ObservatoryNodeData", "filepath": asset.filepath})
                 elif isinstance(asset, ClearCanvasData):
@@ -675,6 +696,7 @@ class AuthoringInterface(QMainWindow):
 
                     elif ctype == "TimerData":
                         data = TimerData(child_data.get("duration", 5.0))
+                        self.restore_timer_display(data, child_data)
                         ti = QTreeWidgetItem(top_item, ["", "⏳ Timer", f"Wait {data.duration} sec", ""])
                         ti.setData(1, Qt.ItemDataRole.UserRole, data)
                         ti.setForeground(1, QColor("#d35400"))
@@ -1136,6 +1158,7 @@ Create an intelligent, multi-step JSON sequence that accomplishes the following 
 
                         elif ctype == "TimerData":
                             data = TimerData(child_data.get("duration", 5.0))
+                            self.restore_timer_display(data, child_data)
                             ti = QTreeWidgetItem(parent, ["", "⏳ Timer", f"Wait {data.duration} sec", ""])
                             ti.setData(1, Qt.ItemDataRole.UserRole, data)
                             ti.setForeground(1, QColor("#d35400"))
@@ -1895,6 +1918,52 @@ Create an intelligent, multi-step JSON sequence that accomplishes the following 
                 spin_dur.valueChanged.connect(lambda v: self.update_tree_labels())
                 self.node_prop_form.addRow("Duration (sec):", spin_dur)
 
+                chk_show = QCheckBox("Show countdown on a canvas")
+                chk_show.setChecked(getattr(asset, 'show_on_canvas', False))
+                chk_show.toggled.connect(
+                    lambda on, a=asset: self.set_timer_on_canvas(a, on))
+                self.node_prop_form.addRow("Display:", chk_show)
+
+                cb_canvas = QComboBox()
+                cb_canvas.addItems([f"Canvas {i + 1}" for i in range(len(self.canvases))])
+                cb_canvas.setCurrentIndex(
+                    min(getattr(asset, 'output_canvas', 0), len(self.canvases) - 1))
+                cb_canvas.currentIndexChanged.connect(
+                    lambda i, a=asset: self.move_timer_display(a, i))
+                self.node_prop_form.addRow("On canvas:", cb_canvas)
+
+                display = getattr(asset, 'display_item', None)
+                if display is not None:
+                    spin_font = QSpinBox()
+                    spin_font.setRange(12, 400)
+                    spin_font.setValue(display.current_font_size)
+                    spin_font.valueChanged.connect(
+                        lambda v, d=display: d.set_font_size(v))
+                    self.node_prop_form.addRow("Font Size:", spin_font)
+
+                    cb_fmt = QComboBox()
+                    cb_fmt.addItems(["Seconds", "MM:SS"])
+                    cb_fmt.setCurrentText(display.time_format)
+                    cb_fmt.currentTextChanged.connect(
+                        lambda t, d=display: d.set_time_format(t))
+                    self.node_prop_form.addRow("Format:", cb_fmt)
+
+                    colour = self.build_color_picker_button(
+                        lambda d=display: d.text_color,
+                        lambda c, d=display: d.set_text_color(c))
+                    self.node_prop_form.addRow("Text Color:", colour)
+
+                    chk_bg = QCheckBox("Draw a background box")
+                    chk_bg.setChecked(display.show_background)
+                    chk_bg.toggled.connect(lambda on, d=display: d.set_show_background(on))
+                    self.node_prop_form.addRow("Background:", chk_bg)
+
+                    self.node_prop_form.addRow(self._hint(
+                        "<i>The countdown is on the canvas now - drag it to position "
+                        "it, and drag its corner handle to resize. The digits scale "
+                        "with the box. The sequence engine stays the only clock; "
+                        "this just displays it.</i>"))
+
             elif isinstance(asset, ObservatoryNodeData):
                 self.node_prop_form.addRow(QLabel("<b>Observatory Auto-Load Node</b>"))
                 file_lay = QHBoxLayout()
@@ -2323,7 +2392,12 @@ Create an intelligent, multi-step JSON sequence that accomplishes the following 
                 self.wait_state = "WAITING_CONFIRMATION"
 
         elif self.wait_state == "WAITING_TIMER":
-            if time.time() - self.timer_start >= self.timer_duration:
+            elapsed = time.time() - self.timer_start
+            # Mirror the engine's own clock onto any visible countdown.
+            self.sync_timer_displays(remaining=self.timer_duration - elapsed,
+                                     running=True)
+            if elapsed >= self.timer_duration:
+                self.sync_timer_displays(remaining=0.0, running=True)
                 self.wait_state = "WAITING_CONFIRMATION"
 
         elif self.wait_state == "WAITING_CONFIRMATION":
@@ -2434,6 +2508,91 @@ Create an intelligent, multi-step JSON sequence that accomplishes the following 
         self.highlight_current_run_step()
 
         self.engine_prev_vision_states = self.vision_tool_states.copy()
+
+    def restore_timer_display(self, timer_data, child_data):
+        """Rebuild a Timer's on-canvas countdown from saved project data."""
+        timer_data.show_on_canvas = bool(child_data.get("show_on_canvas", False))
+        timer_data.output_canvas = int(child_data.get("output_canvas", 0))
+        if not timer_data.show_on_canvas:
+            return
+        idx = max(0, min(len(self.canvases) - 1, timer_data.output_canvas))
+        timer_data.output_canvas = idx
+
+        item = InteractiveTimerItem(timer_data.duration)
+        item.output_canvas = idx
+        display = child_data.get("display") or {}
+        item.setPos(*display.get("pos", [760.0, 460.0]))
+        item.setRect(0, 0, display.get("w", 320.0), display.get("h", 160.0))
+        item.handle.setPos(item.rect().width() - 6, item.rect().height() - 6)
+        item.current_font_size = int(display.get("font_size", 64))
+        item.text_color = QColor(display.get("text_color", "#f1c40f"))
+        item.time_format = display.get("time_format", "Seconds")
+        item.set_show_background(display.get("show_background", True))
+        item._refresh()
+
+        timer_data.display_item = item
+        self.canvases[idx].scene.addItem(item)
+
+    def set_timer_on_canvas(self, timer_data, show):
+        """Create or remove a Timer node's on-canvas countdown."""
+        timer_data.show_on_canvas = bool(show)
+        if show:
+            if getattr(timer_data, 'display_item', None) is None:
+                item = InteractiveTimerItem(timer_data.duration)
+                item.output_canvas = getattr(timer_data, 'output_canvas', 0)
+                item.setPos(760, 460)
+                timer_data.display_item = item
+                self.canvases[item.output_canvas].scene.addItem(item)
+                self.log_message(
+                    f"Timer countdown shown on canvas {item.output_canvas + 1}.")
+        else:
+            self.remove_timer_display(timer_data)
+        # The panel gains/loses the appearance controls, so rebuild it.
+        QTimer.singleShot(0, self.safe_slot(self.build_node_properties, timer_data))
+
+    def remove_timer_display(self, timer_data):
+        item = getattr(timer_data, 'display_item', None)
+        if item is None:
+            return
+        try:
+            scene = item.scene()
+            if scene is not None:
+                scene.removeItem(item)
+        except RuntimeError:
+            pass    # already gone with its canvas
+        timer_data.display_item = None
+
+    def move_timer_display(self, timer_data, canvas_index):
+        timer_data.output_canvas = max(0, min(len(self.canvases) - 1, int(canvas_index)))
+        item = getattr(timer_data, 'display_item', None)
+        if item is None:
+            return
+        try:
+            scene = item.scene()
+            if scene is not None:
+                scene.removeItem(item)
+        except RuntimeError:
+            return
+        item.output_canvas = timer_data.output_canvas
+        self.canvases[timer_data.output_canvas].scene.addItem(item)
+
+    def sync_timer_displays(self, remaining=None, running=False):
+        """Push the engine's countdown onto any visible timer faces.
+
+        Called from the execution tick. The engine owns the clock; this only
+        mirrors it, so the projected number can never disagree with the step
+        that is actually running.
+        """
+        for step in getattr(self, 'execution_sequence', []) or []:
+            node = step.get("timer_node") if isinstance(step, dict) else None
+            item = getattr(node, 'display_item', None) if node else None
+            if item is None:
+                continue
+            try:
+                item.set_remaining(remaining if running and remaining is not None
+                                   else node.duration)
+            except RuntimeError:
+                node.display_item = None    # canvas went away underneath it
 
     def open_canvas_setup(self):
         """Assign output canvases to screens, then apply and remember."""

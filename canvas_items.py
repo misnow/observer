@@ -834,6 +834,120 @@ class InteractiveCaptureItem(AnimatableMixin, QGraphicsRectItem):
         self.reset_scale_rotation_animation()
 
 
+class InteractiveTimerItem(AnimatableMixin, QGraphicsRectItem):
+    """A countdown shown on an output canvas, mirroring a Timer step.
+
+    The Timer sequence node has always been invisible - it just held the
+    sequence for N seconds. This is its optional on-canvas face, so an operator
+    can see how long is left, and it moves and scales like any other asset
+    rather than being locked to a corner.
+
+    It does NOT own the countdown. The sequence engine remains the single
+    clock; this only displays whatever `set_remaining()` is given, so the
+    number on the projector can never disagree with the step that is actually
+    running.
+    """
+
+    def __init__(self, duration=5.0):
+        super().__init__(0, 0, 320, 160)
+        self.trigger = TriggerSettings()
+        self._init_animation()
+        self.duration = float(duration)
+        self.remaining = float(duration)
+        self.is_blinking = False
+
+        self.text_color = QColor("#f1c40f")
+        self.current_font_size = 64
+        self.time_format = "Seconds"        # Seconds | MM:SS
+        self.show_background = True
+
+        self.setFlags(QGraphicsItem.GraphicsItemFlag.ItemIsMovable |
+                      QGraphicsItem.GraphicsItemFlag.ItemIsSelectable)
+        self._apply_background()
+
+        self.label = QGraphicsTextItem(self)
+        self.handle = MediaResizeHandle(self)
+        self.handle.setPos(self.rect().width() - 6, self.rect().height() - 6)
+        self._refresh()
+
+    # --- appearance -------------------------------------------------------
+    def _apply_background(self):
+        if self.show_background:
+            self.setPen(QPen(QColor("#f1c40f"), 2))
+            self.setBrush(QBrush(QColor(20, 20, 20, 200)))
+        else:
+            # Transparent so a projected countdown can sit over live imagery
+            # without a black card behind it.
+            self.setPen(QPen(Qt.PenStyle.NoPen))
+            self.setBrush(QBrush(Qt.BrushStyle.NoBrush))
+
+    def set_show_background(self, on):
+        self.show_background = bool(on)
+        self._apply_background()
+        self.update()
+
+    def set_text_color(self, color):
+        self.text_color = color
+        self._refresh()
+
+    def set_font_size(self, size):
+        self.current_font_size = int(size)
+        self._refresh()
+
+    def set_time_format(self, fmt):
+        self.time_format = fmt
+        self._refresh()
+
+    def format_time(self, seconds):
+        seconds = max(0.0, float(seconds))
+        if self.time_format == "MM:SS":
+            return f"{int(seconds) // 60:02d}:{int(seconds) % 60:02d}"
+        return f"{seconds:.1f}"
+
+    # --- the engine drives this ------------------------------------------
+    def set_remaining(self, seconds):
+        self.remaining = max(0.0, float(seconds))
+        self._refresh()
+
+    def reset_countdown(self):
+        self.remaining = self.duration
+        self._refresh()
+
+    def _refresh(self):
+        self.label.setFont(QFont("Consolas", self.current_font_size, QFont.Weight.Bold))
+        self.label.setDefaultTextColor(self.text_color)
+        self.label.setPlainText(self.format_time(self.remaining))
+        self._centre_label()
+
+    def _centre_label(self):
+        rect = self.rect()
+        bounds = self.label.boundingRect()
+        self.label.setPos((rect.width() - bounds.width()) / 2.0,
+                          (rect.height() - bounds.height()) / 2.0)
+
+    # --- geometry ---------------------------------------------------------
+    def resize_by_drag(self, x, y):
+        w = max(120.0, min(2000.0, x))
+        h = max(60.0, min(2000.0, y))
+        self.setRect(0, 0, w, h)
+        self.handle.setPos(w - 6, h - 6)
+        # The digits grow with the box, so dragging the corner scales the
+        # countdown the way scaling any other asset would.
+        self.current_font_size = max(12, int(h * 0.45))
+        self._refresh()
+
+    def reset_to_default(self):
+        self.reset_scale_rotation_animation()
+        self.setRect(0, 0, 320, 160)
+        self.handle.setPos(314, 154)
+        self.current_font_size = 64
+        self.text_color = QColor("#f1c40f")
+        self.time_format = "Seconds"
+        self.show_background = True
+        self._apply_background()
+        self._refresh()
+
+
 class InteractiveHTMLItem(QGraphicsProxyWidget):
     """A movable/resizable window on the Output Canvas hosting a real,
     JS-capable QWebEngineView. This is the one place in the app that embeds
