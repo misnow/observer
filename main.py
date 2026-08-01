@@ -277,8 +277,12 @@ class ObservatoryEngine(QMainWindow):
                         if not self.timer.isActive():
                             self.toggle_camera()
                         self._dispatch_capture(item_name)
-            except Exception:
-                pass
+            except Exception as e:
+                # Previously `pass`. A swallowed IPC exception is one of the
+                # silent failures CLAUDE.md calls out by name: Studio thinks
+                # it commanded something, Observatory does nothing, and there
+                # is no evidence anywhere. Report it and carry on.
+                self.logger(f"IPC command error: {type(e).__name__}: {e}")
 
     def capture_tool_image(self, tool_item):
         """Grab a still for an Image Capture tool - ROI crop or full frame."""
@@ -1681,6 +1685,22 @@ class ObservatoryEngine(QMainWindow):
             if cap.isOpened(): self.camera_selector.addItem(f"Camera {i} (DSHOW)", i); cap.release()
         if self.camera_selector.count() == 0: self.camera_selector.addItem("No Cameras Found", 0)
 
+    def autostart_camera(self):
+        """Start the feed if a real device was found. Safe to call twice."""
+        try:
+            if self.timer.isActive():
+                return
+            if self.camera_selector.currentData() is None:
+                self.logger("No camera detected - the feed was not started.")
+                return
+            if self.start_camera_feed():
+                self.logger(f"Camera {self.camera_index} started automatically.")
+            else:
+                self.logger("Could not open the camera automatically - "
+                            "use Start Camera Feed once it is available.")
+        except Exception as e:
+            self.logger(f"Camera autostart failed: {e}")
+
     def stop_camera_feed(self):
         """Release the capture device and blank the view.
 
@@ -2143,6 +2163,15 @@ def main():
     app.setStyleSheet(DARK_THEME)
     observatory = ObservatoryEngine(logger=print)
     observatory.show()
+    # Bring the feed up on launch: Observatory with a dead view looks broken,
+    # and every tool needs frames to do anything at all. Deferred to the event
+    # loop so the window is up first - opening a DSHOW device takes a moment
+    # and would otherwise stall the initial paint.
+    #
+    # Deliberately here rather than in __init__: the tests construct
+    # ObservatoryEngine directly, and a constructor that grabs the camera
+    # would have them fighting over real hardware.
+    QTimer.singleShot(150, observatory.autostart_camera)
     sys.exit(app.exec())
 
 

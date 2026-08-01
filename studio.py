@@ -184,6 +184,21 @@ class ProjectorCanvas(QMainWindow):
         super().resizeEvent(event)
         self.fit_scene()
 
+    def showEvent(self, event):
+        """Re-fit once the window is actually on screen.
+
+        Fitting in __init__ or from resize() alone is not enough: until the
+        window is mapped, the viewport still reports its default 640x480, so
+        the scale is computed for the wrong size and then never recomputed
+        (showing does not necessarily deliver another resizeEvent). That left
+        a 1920x1080 scene drawn at a third of its size in the middle of the
+        screen. The deferred call runs after layout has settled, when the
+        viewport finally reports its real size.
+        """
+        super().showEvent(event)
+        self.fit_scene()
+        QTimer.singleShot(0, self.fit_scene)
+
     def clear_canvas(self):
         self.scene.clear()
 
@@ -329,7 +344,30 @@ class AuthoringInterface(QMainWindow):
                 self.log_message(f"IPC Error: {e}")
 
     def emit_llm_trigger_command(self, item, force=False):
-        if not item.observatory_file or not item.source_tool or item.source_tool == "None":
+        # Previously this returned silently, which is why an unconfigured LLM
+        # Call sat on its initial "Waiting for Observatory response..." text
+        # for ever: nothing was ever sent, and nothing said so. The asset does
+        # not call an LLM itself - Observatory owns the camera and the
+        # provider - so it needs BOTH an Observatory project and a named
+        # "LLM Vision" tool inside it.
+        missing = []
+        if not item.observatory_file:
+            missing.append("an Observatory project file")
+        elif not os.path.exists(item.observatory_file):
+            missing.append(f"a readable Observatory file "
+                           f"('{os.path.basename(item.observatory_file)}' is gone)")
+        if not item.source_tool or item.source_tool == "None":
+            missing.append("an LLM Vision tool to target")
+        if missing:
+            note = (f"⚠️ Not configured: this LLM Call needs {' and '.join(missing)}. "
+                    f"Set them in the properties panel - the request is sent to "
+                    f"Observatory, which owns the camera and the LLM provider.")
+            self.log_message(f"<span style='color:orange;'>LLM Call "
+                             f"'{item.tool_name}': {note}</span>")
+            try:
+                item.set_response(note)
+            except RuntimeError:
+                pass
             return
         # Deliberately NOT calling emit_observatory_command() here: it would
         # write "studio_command.json" with a load_and_start command, and the
