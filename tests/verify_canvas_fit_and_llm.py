@@ -99,6 +99,49 @@ check("it re-fits to the new screen size",
 
 # =====================================================================
 w("")
+w("   --- fit modes ---")
+canvas.resize(1600, 700)          # deliberately NOT 16:9
+for _ in range(4):
+    app.processEvents()
+
+canvas.set_fit_mode("fit")
+for _ in range(3):
+    app.processEvents()
+t = canvas.view.transform()
+w(f"   fit     -> m11 {t.m11():.4f} m22 {t.m22():.4f}")
+check("'fit' keeps the shape (equal x and y scale)",
+      abs(t.m11() - t.m22()) < 1e-6, "a circle stays a circle")
+
+canvas.set_fit_mode("stretch")
+for _ in range(3):
+    app.processEvents()
+t = canvas.view.transform()
+vw, vh = canvas.view.viewport().width(), canvas.view.viewport().height()
+w(f"   stretch -> m11 {t.m11():.4f} m22 {t.m22():.4f}  (viewport {vw}x{vh})")
+check("'stretch' fills the screen exactly, distorting as asked",
+      abs(t.m11() - vw / 1920.0) < 0.02 and abs(t.m22() - vh / 1080.0) < 0.02,
+      "this is the skew-to-fit behaviour")
+check("and the two axes really do differ on a non-16:9 screen",
+      abs(t.m11() - t.m22()) > 1e-3, f"{t.m11():.4f} vs {t.m22():.4f}")
+
+canvas.set_fit_mode("actual")
+for _ in range(3):
+    app.processEvents()
+t = canvas.view.transform()
+check("'actual' applies no scaling at all",
+      abs(t.m11() - 1.0) < 1e-6 and abs(t.m22() - 1.0) < 1e-6,
+      f"{t.m11():.4f}")
+canvas.set_fit_mode("fit")
+
+import canvas_display as cd  # noqa: E402
+
+a = cd.Assignment("X", 0, True, "stretch")
+check("fit mode survives an Assignment round trip",
+      cd.Assignment.from_dict(a.to_dict()).fit_mode == "stretch")
+check("an unknown fit mode falls back to 'fit', not garbage",
+      cd.Assignment("X", 0, True, "banana").fit_mode == "fit")
+
+w("")
 w(">>> 2. Observatory brings the feed up on launch <<<")
 import main as om  # noqa: E402
 
@@ -122,6 +165,16 @@ check("with no camera present it declines quietly rather than raising",
       not obs.timer.isActive())
 
 # =====================================================================
+w("")
+w("   --- opening a project must start the feed too ---")
+src_main = open(os.path.join(PROJECT, "main.py"), encoding="utf-8").read()
+load_body = src_main.split("def load_project")[1].split("\n    def ")[0]
+check("load_project starts the camera when none is running",
+      "autostart_camera" in load_body,
+      "opening a project and being met with a dead view looked broken")
+check("and switches camera if the project uses a different one",
+      "switching from" in load_body)
+
 w("")
 w(">>> 3. an unconfigured LLM Call must SAY so <<<")
 studio.AuthoringInterface.launch_observatory = lambda self: None
@@ -189,6 +242,47 @@ if os.path.exists("studio_command.json"):
           cmd.get("observatory_file") == obs_file)
 check("and it now says it is waiting, not that it is unconfigured",
       "Waiting" in llm3.content.toPlainText(), llm3.content.toPlainText()[:60])
+
+w("")
+w(">>> 4. commands must not vanish when Observatory is closed <<<")
+launched = []
+ui.launch_observatory = lambda: launched.append(1)
+
+if os.path.exists("vision_state.json"):
+    os.remove("vision_state.json")
+ui.observatory_process = None
+check("with no vision_state.json, Observatory is judged NOT alive",
+      ui.observatory_is_alive() is False)
+
+launched.clear()
+ui._observatory_launch_pending = False
+ui.ensure_observatory_running("test")
+check(">>> a command with no Observatory running LAUNCHES one <<<",
+      len(launched) == 1,
+      "previously the command was written to disk and simply ignored")
+
+launched.clear()
+ui.ensure_observatory_running("test again")
+check("a second call does not spawn a duplicate", not launched,
+      "a launch already in flight must not be doubled")
+
+# A freshly-written vision_state means one IS alive.
+ui._observatory_launch_pending = False
+with open("vision_state.json", "w") as f:
+    json.dump({"states": {}, "responses": {}, "response_times": {},
+               "captures": {}, "geometry": {}}, f)
+check("a freshly written vision_state.json counts as alive",
+      ui.observatory_is_alive() is True,
+      "liveness is judged by EVIDENCE, not by owning the process")
+launched.clear()
+ui.ensure_observatory_running("should not launch")
+check("and nothing is launched when one is already running", not launched)
+
+old_mtime = os.path.getmtime("vision_state.json")
+os.utime("vision_state.json", (old_mtime - 3600, old_mtime - 3600))
+check("a stale vision_state.json does NOT count as alive",
+      ui.observatory_is_alive() is False,
+      "an Observatory that died leaves its last state file behind")
 
 w("")
 w(">>> Observatory no longer swallows IPC errors <<<")

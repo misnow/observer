@@ -77,21 +77,26 @@ def find_screen(name="", index=None):
 class Assignment:
     """Where one canvas wants to be."""
 
-    def __init__(self, screen_name="", screen_index=None, fullscreen=True):
+    def __init__(self, screen_name="", screen_index=None, fullscreen=True,
+                 fit_mode="fit"):
         self.screen_name = str(screen_name or "")
         self.screen_index = None if screen_index is None else int(screen_index)
         self.fullscreen = bool(fullscreen)
+        # How the 1920x1080 scene maps onto this screen - see
+        # ProjectorCanvas.fit_scene for what each mode means.
+        self.fit_mode = fit_mode if fit_mode in ("fit", "stretch", "actual") else "fit"
 
     def to_dict(self):
         return {"screen_name": self.screen_name,
                 "screen_index": self.screen_index,
-                "fullscreen": self.fullscreen}
+                "fullscreen": self.fullscreen,
+                "fit_mode": self.fit_mode}
 
     @classmethod
     def from_dict(cls, d):
         d = d or {}
         return cls(d.get("screen_name", ""), d.get("screen_index"),
-                   d.get("fullscreen", True))
+                   d.get("fullscreen", True), d.get("fit_mode", "fit"))
 
     def __repr__(self):
         return (f"Assignment({self.screen_name or self.screen_index!r}, "
@@ -124,7 +129,7 @@ class DisplayConfig:
 
     # --- editing ----------------------------------------------------------
     def assign(self, canvas_index, screen_name="", screen_index=None,
-               fullscreen=True, forced=False):
+               fullscreen=True, forced=False, fit_mode="fit"):
         """Set where a canvas belongs.
 
         `forced` exists to make the intent explicit at the call site: only a
@@ -134,7 +139,7 @@ class DisplayConfig:
         if not forced and canvas_index in self.assignments:
             return False
         self.assignments[int(canvas_index)] = Assignment(
-            screen_name, screen_index, fullscreen)
+            screen_name, screen_index, fullscreen, fit_mode)
         return True
 
     def clear(self, canvas_index):
@@ -202,6 +207,9 @@ class DisplayConfig:
                 _show_windowed(canvas)
                 continue
 
+            setter = getattr(canvas, "set_fit_mode", None)
+            if callable(setter):
+                setter(assignment.fit_mode)
             _show_on_screen(canvas, screen, assignment.fullscreen)
             results.append(ApplyResult(index, True,
                                        screen_label=f"{screen.name()} "
@@ -301,12 +309,28 @@ class CanvasSetupDialog(QDialog):
             full = QCheckBox("Fullscreen")
             full.setChecked(existing.fullscreen if existing else True)
 
+            fit = QComboBox()
+            for label, data in (("Fit (keep shape)", "fit"),
+                                ("Stretch to fill", "stretch"),
+                                ("Actual size 1:1", "actual")):
+                fit.addItem(label, data)
+            fpos = fit.findData(existing.fit_mode if existing else "fit")
+            fit.setCurrentIndex(max(0, fpos))
+            fit.setToolTip(
+                "Fit: whole canvas visible, shape preserved - black bars if "
+                "the screen is not 16:9.\n"
+                "Stretch: fills the screen exactly, distorting on a non-16:9 "
+                "screen.\n"
+                "Actual size: no scaling at all (only sensible on a 1920x1080 "
+                "screen).")
+
             row.addWidget(combo, 1)
+            row.addWidget(fit)
             row.addWidget(full)
             holder = QFrame()
             holder.setLayout(row)
             form.addRow(f"Canvas {index + 1}:", holder)
-            self._rows.append((index, combo, full))
+            self._rows.append((index, combo, full, fit))
         root.addWidget(box)
 
         current = QGroupBox("Detected screens")
@@ -326,11 +350,12 @@ class CanvasSetupDialog(QDialog):
         """The edited config. Everything here is a deliberate user choice, so
         it is written with forced=True."""
         out = DisplayConfig()
-        for index, combo, full in self._rows:
+        for index, combo, full, fit in self._rows:
             name = combo.currentData()
             if name is None:
                 continue
             screen_index = max(0, combo.currentIndex() - 1)
             out.assign(index, screen_name=name, screen_index=screen_index,
-                       fullscreen=full.isChecked(), forced=True)
+                       fullscreen=full.isChecked(), forced=True,
+                       fit_mode=fit.currentData() or "fit")
         return out

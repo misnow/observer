@@ -2154,6 +2154,24 @@ class ObservatoryEngine(QMainWindow):
             # tools.
             self.sync_tool_visibility_to_camera()
             self.logger(f"Project loaded successfully from {os.path.basename(file_path)}")
+
+            # Bring the feed up for the project that was just opened. Loading a
+            # project and being met with a dead view - having to press Start
+            # Camera Feed by hand - looked broken, and no tool in the project
+            # can do anything without frames.
+            #
+            # If a feed is already running on a DIFFERENT camera than the one
+            # this project wants, it is moved: the project records which camera
+            # its tools were authored against, and evaluating them against
+            # another camera's image is meaningless.
+            wanted = self.camera_selector.currentData()
+            if not self.timer.isActive():
+                self.autostart_camera()
+            elif wanted is not None and wanted != self.camera_index:
+                self.logger(f"Project uses camera {wanted}; switching from "
+                            f"{self.camera_index}.")
+                self.stop_camera_feed()
+                self.start_camera_feed()
         except Exception as e:
             self.logger(f"Error loading project: {e}")
 

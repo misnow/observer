@@ -162,20 +162,44 @@ class ProjectorCanvas(QMainWindow):
         self.view.setTransformationAnchor(QGraphicsView.ViewportAnchor.NoAnchor)
         self.view.setResizeAnchor(QGraphicsView.ViewportAnchor.NoAnchor)
         self.view.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.fit_mode = "fit"      # fit | stretch | actual
 
         self.setCentralWidget(self.view)
         self.fit_scene()
 
-    def fit_scene(self):
-        """Map the whole 1920x1080 scene onto the window, keeping aspect.
+    def set_fit_mode(self, mode):
+        """'fit' | 'stretch' | 'actual'."""
+        self.fit_mode = mode if mode in ("fit", "stretch", "actual") else "fit"
+        self.fit_scene()
 
-        Without this the view sits at 1:1 and a screen smaller than the scene
-        shows only the top-left corner of the authored layout.
+    def fit_scene(self):
+        """Map the 1920x1080 scene onto the window.
+
+        Three modes, because "fill my screen" means different things:
+
+          fit     - whole scene visible, aspect preserved. Black bars appear
+                    if the screen's aspect differs from 16:9. Nothing is
+                    distorted, so a circle stays a circle.
+          stretch - scene forced to the exact screen shape. No bars, but
+                    non-16:9 screens distort: this is the "skew to fit"
+                    behaviour, and it is what you want when the projected
+                    image is being keystoned onto a surface anyway.
+          actual  - 1:1 pixels, no scaling. Only sensible when the screen is
+                    genuinely 1920x1080.
+
+        Without any of this the view sits at 1:1 and a smaller screen shows
+        only the top-left corner of the authored layout.
         """
         try:
-            self.view.setSceneRect(self.scene.sceneRect())
-            self.view.fitInView(self.scene.sceneRect(),
-                                Qt.AspectRatioMode.KeepAspectRatio)
+            mode = getattr(self, "fit_mode", "fit")
+            rect = self.scene.sceneRect()
+            self.view.setSceneRect(rect)
+            if mode == "actual":
+                self.view.resetTransform()
+            elif mode == "stretch":
+                self.view.fitInView(rect, Qt.AspectRatioMode.IgnoreAspectRatio)
+            else:
+                self.view.fitInView(rect, Qt.AspectRatioMode.KeepAspectRatio)
         except RuntimeError:
             pass
 
@@ -313,6 +337,48 @@ class AuthoringInterface(QMainWindow):
             json.dump(command, f)
         os.replace(tmp, "studio_command.json")
 
+    def observatory_is_alive(self, max_age=4.0):
+        """Is an Observatory actually running and listening?
+
+        Judged by EVIDENCE rather than process ownership: Observatory rewrites
+        vision_state.json every 100ms, so a recent mtime means one is alive.
+        self.observatory_process only knows about an Observatory that THIS
+        Studio launched - if you started it yourself, or Studio was restarted,
+        that handle is None and Studio would wrongly conclude nothing is
+        there.
+        """
+        try:
+            proc = getattr(self, 'observatory_process', None)
+            if proc is not None and proc.poll() is None:
+                return True
+            if not os.path.exists("vision_state.json"):
+                return False
+            return (time.time() - os.path.getmtime("vision_state.json")) < max_age
+        except OSError:
+            return False
+
+    def ensure_observatory_running(self, reason=""):
+        """Launch Observatory if nothing is listening.
+
+        Commands are written to studio_command.json and simply sit there when
+        no Observatory is running - the sequence carries on as though it had
+        been obeyed. Starting one on demand is what makes an Observatory Node
+        or a tool reference work from a cold start.
+        """
+        if self.observatory_is_alive():
+            return True
+        if getattr(self, '_observatory_launch_pending', False):
+            return False        # already starting; don't spawn a second one
+        self._observatory_launch_pending = True
+        QTimer.singleShot(8000, lambda: setattr(self, '_observatory_launch_pending', False))
+        self.log_message(
+            f"<span style='color:orange;'>Observatory isn't running"
+            f"{' (' + reason + ')' if reason else ''} - starting it. "
+            f"The command has been queued and it will be picked up once "
+            f"Observatory is up.</span>")
+        self.launch_observatory()
+        return False
+
     def emit_observatory_command(self, filepath=None, force=False):
         if not filepath:
             for i in range(self.step_tree.topLevelItemCount()):
@@ -335,6 +401,10 @@ class AuthoringInterface(QMainWindow):
                 if filepath: break
 
         if filepath and (force or filepath != self.last_commanded_file) and os.path.exists(filepath):
+            # Start Observatory if nothing is listening, otherwise this
+            # command is written and silently ignored.
+            self.ensure_observatory_running(
+                f"loading {os.path.basename(filepath)}")
             try:
                 command = {"action": "load_and_start", "filepath": filepath, "timestamp": time.time()}
                 self._write_command_atomic(command)
@@ -377,6 +447,7 @@ class AuthoringInterface(QMainWindow):
         # never actually reached Observatory. Folding observatory_file into
         # the single trigger_llm command lets Observatory load it itself if
         # needed before firing the tool.
+        self.ensure_observatory_running(f"LLM Call '{item.tool_name}'")
         try:
             command = {"action": "trigger_llm", "tool_name": item.source_tool, "prompt": item.prompt,
                        "observatory_file": item.observatory_file, "timestamp": time.time()}
