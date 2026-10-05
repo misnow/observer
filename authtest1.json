@@ -18,7 +18,9 @@
             },
             {
                 "type": "TimerData",
-                "duration": 5.0
+                "duration": 5.0,
+                "show_on_canvas": false,
+                "output_canvas": 0
             }
         ]
     },
@@ -61,13 +63,19 @@
                 "tool_name": "LLM Call",
                 "observatory_file": "C:/Users/mikes/PycharmProjects/lightproject/obstest1.json",
                 "output_canvas": 1,
-                "source_tool": "tool01_LLM ",
+                "source_tool": "tool01_LLM",
                 "prompt": "In 40 words or less, roast this person.  ",
                 "font_size": 16,
                 "text_color": "#00ff99",
                 "width": 505.0,
                 "height": 165.0,
                 "hold_for_response": true,
+                "activation_enabled": false,
+                "activation_token": "$ACTIVE",
+                "activation_mode": "Exact reply",
+                "recapture_seconds": 10.0,
+                "failsafe_enabled": true,
+                "failsafe_seconds": 60.0,
                 "rotation": 0.0,
                 "trigger": {
                     "wait_type": "Line",
@@ -78,12 +86,27 @@
             },
             {
                 "type": "TimerData",
-                "duration": 20.0
+                "duration": 40.0,
+                "show_on_canvas": true,
+                "output_canvas": 0,
+                "display": {
+                    "pos": [
+                        760.0,
+                        460.0
+                    ],
+                    "w": 320.0,
+                    "h": 160.0,
+                    "font_size": 64,
+                    "text_color": "#f1c40f",
+                    "time_format": "Seconds",
+                    "show_background": true,
+                    "rotation": 0.0
+                }
             },
             {
                 "type": "InteractiveShapeItem",
                 "pos": [
-                    109.52404022823745,
+                    80.26090785843354,
                     612.0
                 ],
                 "shape_type": "Square",
@@ -193,7 +216,9 @@
             },
             {
                 "type": "TimerData",
-                "duration": 5.0
+                "duration": 5.0,
+                "show_on_canvas": false,
+                "output_canvas": 0
             },
             {
                 "type": "FlowControlData",

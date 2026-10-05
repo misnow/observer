@@ -19,9 +19,16 @@ the log, not the exit code** — exit codes are unreliable in this environment
 
 ## Paths
 
-These carry absolute paths to a session temp folder that no longer exists.
-Expect to fix the `RES`/`ISO` constants at the top of each before running.
-The *logic* is the valuable part.
+**Fixed.** Every script now derives its paths from `__file__` and the system
+temp directory, so they run from a fresh clone on any machine. Logs land in
+`%TEMP%\lightguide_tests\` (older scripts) or `%TEMP%\verify_<name>.log`
+(newer ones).
+
+They previously hardcoded a session scratchpad that no longer existed, which
+made eight of them die on `open()` before running a single check.
+`verify_model3d.py` additionally assumed `m_box.stl` and `test_box.step` were
+already lying in that folder; it now generates them with trimesh and
+`mesh_to_step`.
 
 `verify_canvas_items_split.py` is the exception — it derives the project root
 from its own `__file__` and makes its own temp dir, so it runs as-is and its
@@ -55,6 +62,13 @@ exit code is meaningful (0 = pass).
 | `verify_worker_crashfix.py` | QThread lifecycle: rapid reloads, deleted-item delivery, torn-down panels (predates the Image Capture migration; still expects `InteractiveCaptureItem.roi`, which deliberately no longer exists) |
 | `verify_canvas_items_split.py` | `canvas_items.py` split: name surface, one-way dependency, every asset type inserted + save/load round trip |
 | `verify_observatory_studio_fixes.py` | Camera switching moves the feed, motion threshold default (incl. proof the old 127 was blind to a realistic delta), capture/cutout paths + thumbnails, raw-vs-cutout picker over real IPC, Studio File→New. Also asserts the live QSettings namespace is untouched |
+| `verify_blob_detection.py` | Blob Detection really detects: drives the REAL per-frame path via `update_frame()` with a fake camera. Single-blob scoring (the case that could never trigger), four lighting conditions a fixed threshold cannot handle, a noisy field of view, selectable blob count, Motion mode, Manual mode, persistence |
+| `verify_blob_follow.py` | The whole chain: blob centroid in camera pixels -> calibration -> text placed on canvas, with a known homography and a real `vision_state.json` round trip. Anchors, offsets, blob lost and reacquired, and that an uncalibrated follower refuses to guess |
+| `verify_calibration.py` | Projector<->camera homography recovered from a KNOWN one: the projected pattern is warped into a synthetic camera frame and the calibration must recover the matrix. Both pattern strategies, and the quality gate refusing scrambled, collinear or mismatched points |
+| `verify_canvas_display.py` | Canvas-to-screen assignment. Above all: a missing projector must NOT rewrite the saved config. Name-before-index screen matching, forced-only overwrite, borderless fullscreen, and an unassigned canvas left untouched |
+| `verify_canvas_fit_and_llm.py` | The output canvas filling the screen (measured scale vs expected), the three fit modes, camera autostart on launch and on project open, an unconfigured LLM Call reporting itself, and Observatory being launched on demand when none is listening |
+| `verify_timer_on_canvas.py` | Timer countdown as a canvas asset: formatting, move/scale, rotation about its centre, the engine-owns-the-clock relationship, visibility during the run (the reported bug), save/load of every display property, and a legacy project |
+| `verify_tool_selection_and_ui.py` | The reported UI defects: selecting the last remaining tool, clicking an ALREADY-selected tool, trigger indicators differing by state, a Blob tool able to train a reference frame, an unpannable projected canvas, and LLM output canvas = None |
 | `verify_lg_api.py` | LGS Web API client with urlopen stubbed: request building, the live response envelope, error paths, the `confirm=True` gate on destructive calls, GET-only discovery, and Postman-collection import overriding the inferred table. No LGS machine needed |
 | `verify_lg_api_live.py` | **Run this on/pointed at the real LGS box** — the only way to confirm the inferred endpoint paths. GET-only, so it cannot start a program or shut the station down. Takes `[host] [port] [collection.json]` |
 | `verify_studio_layout.py` | Properties column scrolls instead of running off the bottom: measures **actual content vs viewport heights** per asset type (one fresh window each), the width cap, stale-widget rebuilds, collapsible AI Assistant. Streams its log per line and `os._exit()`s — see the crash note in HANDOFF |

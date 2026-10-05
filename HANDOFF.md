@@ -46,45 +46,33 @@ C:\Users\mikes\AppData\Local\Programs\Python\Python312\python.exe main.py
 
 ## 2b. Getting this onto another machine
 
-⚠️ **This repo has NO git remote. Nothing is backed up anywhere.** All 13
-commits live only in `C:\Users\mikes\PycharmProjects\lightproject\.git` on the
-authoring PC. Losing that drive loses the history, and you cannot `git pull`
-on another machine until a remote exists.
+**See `SETUP.md`** — it is the authoritative clone-and-run guide: prerequisites,
+venv, dependency install (including an air-gapped wheel-bundle route), how to
+verify the install before trusting it, and the per-machine configuration
+checklist.
 
-To fix that (private remote — the repo carries no secrets, verified: keys live
-in the registry, and `captures/`, `vision_state.json`, `studio_command.json`
-are gitignored):
+The short version:
 
 ```
-gh repo create lightguide --private --source=. --remote=origin --push
-```
-
-or against any existing host:
-
-```
-git remote add origin <url>
-git push -u origin master
-```
-
-Then on the LGS-side machine:
-
-```
-git clone <url> lightproject
+git clone https://github.com/misnow/observer.git lightproject
 cd lightproject
-<python312>\python.exe -m pip install -r requirements.txt
-<python312>\python.exe studio.py
+py -3.12 -m venv .venv
+.\.venv\Scripts\Activate.ps1
+python -m pip install -r requirements.txt
+python tests\verify_canvas_items_split.py     # exit 0 = the install is sound
+python studio.py
 ```
 
-**Do not build an .exe for this.** Freezing (PyInstaller) exists to reach
-machines *without* Python; both of yours have it. A PyQt6 + QtWebEngine +
-onnxruntime bundle is 500MB-plus, QtWebEngine is notoriously awkward to
-freeze, and you would repeat that build every revision. `git pull` is seconds
-and changes nothing about how the app runs. Only revisit this if the app has
-to run somewhere you cannot install Python.
+**Do not build an .exe.** Freezing exists to reach machines *without* Python.
+A PyQt6 + QtWebEngine + onnxruntime bundle is 500 MB-plus, QtWebEngine is
+notoriously awkward to freeze, and you would rebuild it every revision.
+`git pull` is seconds and changes nothing about how the app runs. Only revisit
+this if it has to run somewhere Python cannot be installed.
 
-`requirements.txt` pins the verified versions. `cadquery` (STEP import/export)
-and `mediapipe` (the Pose tool) are the big optional ones — both can be
-dropped if that machine doesn't need them.
+**What does not travel with the repo:** API keys (Windows registry, never a
+file here), the canvas→screen assignment, camera selection, and the runtime
+files `captures/`, `vision_state.json`, `studio_command.json`. SETUP.md §6 lists
+each and where to set it.
 
 ---
 
@@ -435,23 +423,29 @@ inside a Qt-invoked slot. To find it:
 
 ---
 
-## 6. Suggested first move
+## 6. Where to pick up
 
-The `canvas_items.py` split is **done** (see §4). `studio.py` is now the app
-shell + sequence engine + properties panels.
+**See `ROADMAP.md`** — every planned item and known defect, each with the file
+it lives in, so starting a task does not begin with grep.
 
-Pick from:
+Highest value first:
 
-- **Fix the two stale tests** (§4 item 1). Small, and it restores real
-  regression coverage on 3D pose and QThread lifecycle — the latter guards
-  one of the three documented crash causes.
-- **Split `studio.py` further** if it grows again. Next natural seams: the
-  sequence/run engine, and the properties-panel builders. The method that
-  worked: AST-locate the exact node span, extract verbatim, delete by
-  **explicit content replacement with an assert on match count** (never
-  index-range slicing), then prove nothing moved by diffing every class body
-  against `git show HEAD:studio.py`. That verification script is worth
-  rewriting each time — it's what turns a scary refactor into a boring one.
-- **Chase the exit-time `0xC0000409`** (§4 item 2).
+1. **The properties-panel access violation** (ROADMAP §1a). It kills the app
+   during ordinary use, there is a 30-second repro, and `faulthandler` catches
+   it — unlike the other crash. Pre-existing, timing-dependent.
+2. **Confirm the LGS Web API endpoints** (ROADMAP §3d) once you are on a
+   network with the LGS station. One GET-only command, and exporting their
+   Postman collection replaces 13 guessed paths with real ones.
+3. **Fix the two stale tests** (§4). Small, and `verify_worker_crashfix` guards
+   one of the three documented crash causes.
+4. **The calibration wizard** (ROADMAP §3c). The maths is built and verified to
+   0.65 px; only the cross-app orchestration is missing.
 
 Whatever you pick: **commit before starting.**
+
+If `studio.py` needs splitting again, the method that worked was: AST-locate
+the exact node span, extract verbatim, delete by **explicit content replacement
+with an assert on match count** (never index-range slicing), then prove nothing
+moved by diffing every class body against `git show HEAD:studio.py`. That
+verification script is worth rewriting each time — it is what turns a scary
+refactor into a boring one.

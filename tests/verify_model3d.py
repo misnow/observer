@@ -1,12 +1,21 @@
 import sys, os, json, time
-result_path = r"C:\Users\mikes\AppData\Local\Temp\claude\C--Users-mikes-PycharmProjects-lightproject\2b94bdb8-39d7-4575-a146-dbe9b5a960ad\scratchpad\result_model3d.txt"
+import os
+import tempfile as _tempfile
+# Portable paths. These were hardcoded to a session scratchpad that no longer
+# exists and to one machine's project directory, so the script died on
+# `open()` before it ran a single check - and would never run at all on a
+# fresh clone. Derived from __file__ and the system temp dir instead.
+_PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+_TEST_TMP = os.path.join(_tempfile.gettempdir(), "lightguide_tests")
+os.makedirs(_TEST_TMP, exist_ok=True)
+result_path = os.path.join(_TEST_TMP, "result_model3d.txt")
 log = open(result_path, "w", encoding="utf-8")
 def w(*a):
     log.write(" ".join(str(x) for x in a) + "\n")
     log.flush()
 
-PROJECT_DIR = r"C:\Users\mikes\PycharmProjects\lightproject"
-SCRATCH = r"C:\Users\mikes\AppData\Local\Temp\claude\C--Users-mikes-PycharmProjects-lightproject\2b94bdb8-39d7-4575-a146-dbe9b5a960ad\scratchpad"
+PROJECT_DIR = _PROJECT_ROOT
+SCRATCH = _TEST_TMP
 ISO = os.path.join(SCRATCH, "m3d_isolated")
 os.makedirs(ISO, exist_ok=True)
 sys.path.insert(0, PROJECT_DIR)
@@ -26,6 +35,19 @@ a = studio.AuthoringInterface(canvas)
 
 STL = os.path.join(SCRATCH, "m_box.stl")
 STEP = os.path.join(SCRATCH, "test_box.step")
+
+# Generate the fixtures instead of assuming they are lying around. They used to
+# be leftovers in a session scratchpad, so this script failed on a machine that
+# had never produced them - which is every fresh clone.
+if not os.path.exists(STL) or not os.path.exists(STEP):
+    import trimesh as _trimesh
+    _box = _trimesh.creation.box(extents=(40.0, 30.0, 20.0))
+    _box.export(STL)
+    if not os.path.exists(STEP):
+        import mesh_to_step as _m2s
+        _m2s.mesh_to_step(_box.vertices, _box.faces, STEP)
+    w("fixtures: generated %s and %s" % (os.path.basename(STL),
+                                         os.path.basename(STEP)))
 
 # --- Insert empty, as the button does ---
 a.insert_3d_model()

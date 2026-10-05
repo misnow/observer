@@ -23,6 +23,18 @@ Supporting modules (deliberately standalone, keep them that way):
 | `segmenter.py` | Object segmentation, pluggable backends (grabcut / SAM) |
 | `mesh_to_step.py` | Faceted STEP (ISO-10303-21) export from a triangle mesh |
 | `lg_api.py` | Client for the **external** Light Guide Systems Web API (port 54274) |
+| `calibration.py` | Projector<->camera homography: pattern generation, detection, quality-gated solve |
+| `canvas_display.py` | Which physical screen each output canvas fills, and the Canvas Setup dialog |
+
+
+## Where the other documentation lives
+
+| File | Read it when |
+|---|---|
+| `SETUP.md` | Standing up a new machine from a bare clone — prerequisites, install (including an air-gapped wheel-bundle route), verification, per-machine config |
+| `ROADMAP.md` | Planned work, known defects and stubs, each with the file it lives in |
+| `HANDOFF.md` | Current state and the session-by-session record of what changed and why |
+| `tests/README.md` | What each of the 27 verification scripts covers, and the conventions they follow |
 
 ---
 
@@ -59,6 +71,22 @@ Recurring causes, all seen in this project:
 
 `safe_slot(fn, *args)` wraps a callable, catches exceptions, logs them, and
 crucially **accepts no signal arguments** — which is what defuses cause #1.
+
+### There is a *second*, different crash — tell them apart
+
+A genuine **access violation**, exit code **139** under Git Bash, hit by
+clicking between certain asset properties panels in Studio.
+
+|  | `qFatal()` abort | Access violation |
+|---|---|---|
+| Exit code | `-1073740791` / `0xC0000409` | `139` |
+| `faulthandler` | prints **nothing** | **prints a traceback** |
+| Cause | ordinary Python exception in a Qt slot | real memory error — a dead C++ object |
+
+So **output from `faulthandler` means you are looking at the second one**, and
+silence confirms the first. The second is timing-dependent and disappears under
+`sys.settrace`, so instrument it with a streamed, per-line-flushed log rather
+than a tracer. Details and repro: ROADMAP.md §1a.
 
 ---
 
@@ -200,15 +228,16 @@ assertions in `tests/verify_gemini_segmenter.py`:
 
 ## Known open items
 
-- `studio.py` could be split further if it grows again — the sequence engine
-  and the properties-panel builders are the next natural seams. (The canvas
-  item classes are already out, in `canvas_items.py`.)
-- Intermittent `0xC0000409` on exit still unresolved; `closeEvent` stops web
-  views, videos, and waits on workers, but a repro hasn't been pinned down.
-- `segmenter.py` supports SAM3/SAM2 detection but its predictor API is
-  **not wired** — it raises a clear message rather than guessing at an
-  unverified API. SAM3 is real (`facebookresearch/sam3`); PyPI packages of
-  that name are third-party repackagings. (The `gemini` backend *is* wired
-  and verified live.)
-- No local image→3D model. That step is external (TripoSR local, or
-  Tripo/Meshy API). Everything either side of it is built.
+Tracked in **ROADMAP.md**, with the file each one lives in. The headlines:
+
+- **Two live crashes** — the exit-time `0xC0000409`, and the properties-panel
+  access violation above. Both intermittent, neither pinned down.
+- **"Human Rigging (Pose)" is a stub** — it is in the tool dropdown and the
+  tracker is constructed, but nothing processes frames for it.
+- **Not started:** human identifier / pattern library, undo, the calibration
+  wizard (the maths is built and verified; only the live orchestration is
+  missing), image→3D.
+- `segmenter.py` detects SAM3/SAM2 but its predictor API is **not wired** — it
+  raises a clear message rather than guessing at an unverified API. SAM3 is
+  real (`facebookresearch/sam3`); PyPI packages of that name are third-party
+  repackagings. The `gemini` backend *is* wired and verified live.

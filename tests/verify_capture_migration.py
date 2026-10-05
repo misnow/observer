@@ -1,11 +1,20 @@
 import sys, os, json, time
-RES = r"C:\Users\mikes\AppData\Local\Temp\claude\C--Users-mikes-PycharmProjects-lightproject\2b94bdb8-39d7-4575-a146-dbe9b5a960ad\scratchpad\result_capture_migration.txt"
+import os
+import tempfile as _tempfile
+# Portable paths. These were hardcoded to a session scratchpad that no longer
+# exists and to one machine's project directory, so the script died on
+# `open()` before it ran a single check - and would never run at all on a
+# fresh clone. Derived from __file__ and the system temp dir instead.
+_PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+_TEST_TMP = os.path.join(_tempfile.gettempdir(), "lightguide_tests")
+os.makedirs(_TEST_TMP, exist_ok=True)
+RES = os.path.join(_TEST_TMP, "result_capture_migration.txt")
 log = open(RES, "w", encoding="utf-8")
 def w(*a):
     log.write(" ".join(str(x) for x in a) + "\n"); log.flush()
 
-PROJ = r"C:\Users\mikes\PycharmProjects\lightproject"
-ISO = r"C:\Users\mikes\AppData\Local\Temp\claude\C--Users-mikes-PycharmProjects-lightproject\2b94bdb8-39d7-4575-a146-dbe9b5a960ad\scratchpad\mig_iso"
+PROJ = _PROJECT_ROOT
+ISO = os.path.join(_TEST_TMP, "mig_iso")
 os.makedirs(ISO, exist_ok=True)
 sys.path.insert(0, PROJ)
 os.chdir(ISO)   # shared IPC dir for both apps

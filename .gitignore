@@ -30,3 +30,9 @@ captures/
 *.swp
 Thumbs.db
 desktop.ini
+
+# --- Offline dependency bundle -----------------------------------------
+# Built with `pip download -r requirements.txt -d wheelhouse` to carry
+# dependencies onto a machine with no PyPI access (SETUP.md 3d). Roughly a
+# gigabyte of wheels - never commit it.
+wheelhouse/
